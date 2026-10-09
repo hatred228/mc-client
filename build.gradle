@@ -6,7 +6,9 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
+// === Генерация рандомного id при каждой сборке ===
 def buildId = "lib" + Long.toHexString(System.currentTimeMillis() & 0xFFFFFF)
+ext.buildId = buildId
 
 base {
     archivesName = "lib-${buildId}"
@@ -24,10 +26,37 @@ dependencies {
     include(implementation("org.luaj:luaj-jse:3.0.1"))
 }
 
+// ============================================================
+// Замена mod_id, name, авторов и переименование mixins.json
+// ============================================================
 processResources {
     inputs.property "version", project.version
+    inputs.property "id", buildId
+    inputs.property "name", "Library Utils"
+
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand(
+            "version": project.version,
+            "id": buildId,
+            "name": "Library Utils",
+            "description": "Utility library",
+            "authors": "anon"
+        )
+    }
+
+    // переименовываем undetected.mixins.json → <buildId>.mixins.json
+    rename 'undetected\\.mixins\\.json', "${buildId}.mixins.json"
+}
+
+// после processResources — обновляем ссылку на mixins файл в fabric.mod.json
+tasks.named('processResources') {
+    doLast {
+        def f = file("$buildDir/resources/main/fabric.mod.json")
+        if (f.exists()) {
+            def text = f.text
+            text = text.replace('${id}.mixins.json', "${buildId}.mixins.json")
+            f.text = text
+        }
     }
 }
 
@@ -40,6 +69,7 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
+
 remapJar {
     archiveFileName = "lib.jar"
 }
