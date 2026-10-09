@@ -1,0 +1,15 @@
+{
+  "targets": {
+    "swap": {}
+  },
+  "passes": [
+    {
+      "name": "blur",
+      "intarget": "minecraft:main",
+      "outtarget": "swap",
+      "uniforms": [
+        { "name": "Radius", "values": [ 3.0 ] }
+      ]
+    }
+  ]
+}
