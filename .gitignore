@@ -1,6 +1,15 @@
 # Gradle
 .gradle/
 build/
+gradle/9*/
+gradle/8*/
+gradle/7*/
+gradle/buildOutputCleanup/
+gradle/vcs-1/
+gradle/checksums/
+gradle/fileChanges/
+gradle/fileHashes/
+gradle/gc.properties
 !gradle/wrapper/gradle-wrapper.jar
 
 # IDE
