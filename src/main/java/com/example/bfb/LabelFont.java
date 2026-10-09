@@ -22,7 +22,7 @@ import java.util.Map;
 public final class LabelFont {
     private static final int ATLAS = 1024;
     private static final int SIZE = 13;
-    private static final Identifier ID = Identifier.of("undetected", "font/label");
+    private static final Identifier ID = Identifier.of("libbase", "font/label");
     private static final Map<Character, Glyph> GLYPHS = new HashMap<>();
     private static NativeImage image;
     private static NativeImageBackedTexture texture;

@@ -81,7 +81,7 @@ public final class RingTextureCache {
             }
         }
 
-        Identifier id = Identifier.of("undetected",
+        Identifier id = Identifier.of("libbase",
                 "ring/" + size + "_" + thickness + "_" + arcIndex);
         NativeImageBackedTexture tex = new NativeImageBackedTexture(() -> "bfb-ring", img);
         MinecraftClient.getInstance().getTextureManager().registerTexture(id, tex);

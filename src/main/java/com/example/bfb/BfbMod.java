@@ -15,7 +15,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class BfbMod implements ClientModInitializer {
-    public static final String MOD_ID = "undetected";
+    public static final String MOD_ID = "libbase";
 
     private static final Set<Integer> heldKeys = new HashSet<>();
 

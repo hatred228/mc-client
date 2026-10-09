@@ -603,7 +603,7 @@ public final class HudRenderer {
 
         InfoModule info = ModuleManager.get(InfoModule.class);
         if (info != null && info.isEnabled()) {
-            String title = "Undetected";
+            String title = "Library Utils";
             String fps = client.getCurrentFps() + " FPS  " + ping(client) + " ms";
             int titleWidth = SalFont.width(title);
             int fpsWidth = SalFont.width(fps);

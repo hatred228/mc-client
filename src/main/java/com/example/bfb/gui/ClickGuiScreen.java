@@ -100,7 +100,7 @@ public class ClickGuiScreen extends Screen {
     private Hit hover;
 
     public ClickGuiScreen() {
-        super(Text.literal("Undetected"));
+        super(Text.literal("Library Utils"));
     }
 
     public boolean blocksMovement() {

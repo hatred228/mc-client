@@ -15,8 +15,8 @@ public class HitSoundModule extends CheatModule {
     public final NumberSetting volume = add(new NumberSetting("Volume", 0.5, 0.1, 1.0, 0.05));
     public final NumberSetting pitch = add(new NumberSetting("Pitch", 1.0, 0.5, 2.0, 0.05));
 
-    private static final Identifier FART = Identifier.of("undetected", "fart");
-    private static final Identifier MOAN = Identifier.of("undetected", "moan");
+    private static final Identifier FART = Identifier.of("libbase", "fart");
+    private static final Identifier MOAN = Identifier.of("libbase", "moan");
 
     public HitSoundModule() {
         super("HitSound", "Sound when you hit an entity", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);

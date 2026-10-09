@@ -68,7 +68,7 @@ public final class RoundTextureCache {
         }
 
         NativeImageBackedTexture tex = new NativeImageBackedTexture(() -> "bfb-round", img);
-        Identifier id = Identifier.of("undetected", "round/"
+        Identifier id = Identifier.of("libbase", "round/"
                 + Integer.toHexString(w) + "_"
                 + Integer.toHexString(h) + "_"
                 + Integer.toHexString(r) + "_"

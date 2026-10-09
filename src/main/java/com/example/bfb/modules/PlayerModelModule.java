@@ -53,6 +53,6 @@ public class PlayerModelModule extends CheatModule {
             default -> null;
         };
         if (file == null) return null;
-        return Identifier.of("undetected", "textures/models/" + file + ".png");
+        return Identifier.of("libbase", "textures/models/" + file + ".png");
     }
 }

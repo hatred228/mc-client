@@ -50,7 +50,7 @@ public class WatermarkModule extends CheatModule {
         if (mod == null || !mod.isEnabled() || client.player == null) return;
 
         List<Segment> segments = new ArrayList<>();
-        segments.add(new Segment("Undetected", mod.accentColor1.getRgb() & 0xFFFFFF));
+        segments.add(new Segment("Library Utils", mod.accentColor1.getRgb() & 0xFFFFFF));
         if (mod.showName.get()) segments.add(new Segment(client.player.getGameProfile().name(), 0xF4F6FF));
         if (mod.showFps.get()) segments.add(new Segment(client.getCurrentFps() + " fps", 0x4CC3FF));
         if (mod.showPing.get()) {

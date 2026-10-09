@@ -83,7 +83,7 @@ public class HitEffectsModule extends CheatModule {
                 if (mod != null) mod.onHit();
             }
             case "Moan" -> player.playSound(net.minecraft.sound.SoundEvent.of(
-                    net.minecraft.util.Identifier.of("undetected", "moan")), 1f, 1f);
+                    net.minecraft.util.Identifier.of("libbase", "moan")), 1f, 1f);
             case "Thunder" -> player.playSound(SoundEvents.ENTITY_LIGHTNING_BOLT_THUNDER, 0.5f, 1.2f);
             default -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(), 1f, 1f);
         }

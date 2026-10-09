@@ -44,7 +44,7 @@ public final class GlowTextureCache {
             }
         }
 
-        Identifier id = Identifier.of("undetected", "glow/" + size);
+        Identifier id = Identifier.of("libbase", "glow/" + size);
         NativeImageBackedTexture tex = new NativeImageBackedTexture(() -> "bfb-glow", img);
         MinecraftClient.getInstance().getTextureManager().registerTexture(id, tex);
         return id;
