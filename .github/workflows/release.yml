@@ -22,14 +22,17 @@ jobs:
 
       - run: ./gradlew clean build
 
-      - name: Find jar
+      - name: Find and rename jar
         id: find
         run: |
           JAR=$(find build/libs -name "lib.jar" | head -1)
           if [ -z "$JAR" ]; then
             JAR=$(find build/libs -name "*.jar" ! -name "*sources*" | head -1)
           fi
-          echo "jar=$JAR" >> $GITHUB_OUTPUT
+          echo "found $JAR"
+          mkdir -p out
+          cp "$JAR" out/lib.jar
+          echo "jar=out/lib.jar" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
