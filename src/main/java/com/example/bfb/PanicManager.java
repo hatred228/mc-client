@@ -42,22 +42,44 @@ public final class PanicManager {
     private static void triggerPanic(MinecraftClient client) {
         panicked = true;
 
-        // 1. Выключаем модули
+        // 1. Выключаем модули + вызываем onDisable
         for (CheatModule m : ModuleManager.getModules()) {
-            if (m.isEnabled()) m.applyEnabled(false);
+            if (m.isEnabled()) {
+                m.applyEnabled(false);
+                try { m.onDisable(); } catch (Throwable ignored) {}
+            }
         }
 
-        // 2. Закрываем ClickGui
-        if (client.currentScreen != null) client.setScreen(null);
+        // 2. Отключаем HUD полностью
+        try {
+            com.example.bfb.hud.HudIntegration hud = com.example.bfb.hud.HudIntegration.get();
+            if (hud != null) hud.setEnabled(false);
+        } catch (Throwable ignored) {}
 
-        // 3. Пишем panic-file
+        // 3. Отдельно глушим RENDER и VISUALS модули (мало ли)
+        for (CheatModule m : ModuleManager.getModules()) {
+            Category cat = m.getCategory();
+            if (cat == Category.RENDER || cat == Category.VISUALS) {
+                m.applyEnabled(false);
+                try { m.onDisable(); } catch (Throwable ignored) {}
+            }
+        }
+
+        // 4. Скрываем меню
+        try {
+            if (client.currentScreen != null) client.setScreen(null);
+        } catch (Throwable ignored) {}
+
+        // 5. Пишем panic-файл для лаунчера
         writePanicSignal();
 
-        // 4. Уведомление
-        if (client.player != null) {
-            client.player.sendMessage(
-                    Text.literal("§7[§aOK§7] hidden"), true);
-        }
+        // 6. Уведомление (только тебе видно)
+        try {
+            if (client.player != null) {
+                client.player.sendMessage(
+                        Text.literal("§7[§aOK§7] hidden"), true);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private static void writePanicSignal() {
