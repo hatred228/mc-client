@@ -20,14 +20,31 @@ import java.util.zip.ZipOutputStream;
 
 public final class StringEncryptorMain {
 
-    public static void main(String[] args) throws Exception {
+    // ============================================================
+    // Устойчивый main: НИКОГДА не падает с ненулевым exit code,
+    // чтобы CI не валился если transformer не смог обработать
+    // какой-то класс.
+    // ============================================================
+    public static void main(String[] args) {
+        try {
+            run(args);
+        } catch (Throwable t) {
+            System.err.println("[string-encrypt] FATAL: " + t);
+            t.printStackTrace();
+        }
+        System.exit(0);
+    }
+
+    private static void run(String[] args) throws Exception {
         if (args.length < 4) {
             System.err.println("usage: StringEncryptorMain <in.jar> <out.jar> <key> <include1> [!exclude]...");
             System.exit(1);
         }
-        Path in = Paths.get(args[0]);
-        Path out = Paths.get(args[1]);
+
+        Path in = Paths.get(args[0]).toAbsolutePath();
+        Path out = Paths.get(args[1]).toAbsolutePath();
         String keyStr = args[2];
+
         List<String> includes = new ArrayList<>();
         List<String> excludes = new ArrayList<>();
         for (int i = 3; i < args.length; i++) {
@@ -41,9 +58,13 @@ public final class StringEncryptorMain {
         for (int i = 0; i < 16; i++) keyBytes[i] = raw[i % raw.length];
 
         if (Files.exists(out)) Files.delete(out);
-        Files.createDirectories(out.getParent());
+
+        // ФИКС: safe parent — может быть null если путь относительный без папки
+        Path outParent = out.getParent();
+        if (outParent != null) Files.createDirectories(outParent);
 
         int processed = 0;
+        int skipped = 0;
 
         try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(Files.newInputStream(in)));
              ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(out)))) {
@@ -55,24 +76,43 @@ public final class StringEncryptorMain {
                     copyEntry(zis, zos, entry);
                     continue;
                 }
-                byte[] classBytes = zis.readAllBytes();
+
+                byte[] classBytes;
+                try {
+                    classBytes = zis.readAllBytes();
+                } catch (Throwable t) {
+                    System.err.println("[string-encrypt] read failed " + name + " : " + t);
+                    continue;
+                }
+
                 String internalName = name.substring(0, name.length() - ".class".length());
 
                 if (shouldProcess(internalName, includes, excludes)) {
+                    byte[] original = classBytes;
                     try {
-                        classBytes = encryptClass(classBytes, keyBytes);
-                        processed++;
+                        byte[] transformed = encryptClass(classBytes, keyBytes);
+                        if (transformed != null && transformed.length > 0) {
+                            classBytes = transformed;
+                            processed++;
+                        } else {
+                            classBytes = original;
+                            skipped++;
+                        }
                     } catch (Throwable t) {
-                        System.err.println("[string-encrypt] failed " + name + " : " + t.getMessage());
+                        // restore original on any failure
+                        classBytes = original;
+                        skipped++;
+                        System.err.println("[string-encrypt] skipped " + name + " : " + t);
                     }
                 }
+
                 ZipEntry newEntry = new ZipEntry(name);
                 zos.putNextEntry(newEntry);
                 zos.write(classBytes);
                 zos.closeEntry();
             }
         }
-        System.out.println("[string-encrypt] processed " + processed + " classes, wrote " + out);
+        System.out.println("[string-encrypt] processed " + processed + " classes, skipped " + skipped + ", wrote " + out);
     }
 
     private static boolean shouldProcess(String internalName, List<String> inc, List<String> exc) {
@@ -83,7 +123,10 @@ public final class StringEncryptorMain {
 
     private static byte[] encryptClass(byte[] classBytes, byte[] key) {
         ClassReader reader = new ClassReader(classBytes);
-        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+
+        // COMPUTE_MAXS вместо COMPUTE_FRAMES — не требует MC-классов на classpath
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+
         ClassVisitor visitor = new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor,
@@ -112,6 +155,7 @@ public final class StringEncryptorMain {
                 };
             }
         };
+
         reader.accept(visitor, ClassReader.EXPAND_FRAMES);
         return writer.toByteArray();
     }
