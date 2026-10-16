@@ -25,10 +25,14 @@ import java.util.zip.GZIPOutputStream;
 public final class BfbConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("undetected.json");
+    private static final Path ACTIVE_FILE = FabricLoader.getInstance().getConfigDir()
+            .resolve("undetected").resolve("active_profile.txt");
     public static final Path PROFILES = FabricLoader.getInstance().getConfigDir()
             .resolve("undetected").resolve("configs");
     public static final Path EXPORTS = FabricLoader.getInstance().getConfigDir()
             .resolve("undetected").resolve("exports");
+    public static final Path BACKUPS = FabricLoader.getInstance().getConfigDir()
+            .resolve("undetected").resolve("backups");
     private static String active = "default";
 
     private BfbConfig() {}
@@ -37,13 +41,40 @@ public final class BfbConfig {
 
     // ================= load / save =================
 
+    /**
+     * Загрузка при старте:
+     *   1. Читает имя активного профиля из active_profile.txt (надёжнее чем json)
+     *   2. Читает undetected.json для fallback
+     *   3. Если профиль существует — грузит ЕГО
+     *   4. Иначе — undetected.json как есть
+     */
     public static void load() {
+        // 1. имя активного профиля
+        String fromFile = readActiveFile();
+        if (fromFile != null) active = safe(fromFile);
+
         JsonObject root = read(FILE);
-        if (root == null) return;
-        readMeta(root);
-        applyAll(root, false);
+        if (root != null) {
+            readMeta(root);
+        }
+
+        // 2. если профиль существует — грузим его
+        Path profileFile = PROFILES.resolve(safe(active) + ".json");
+        if (Files.exists(profileFile)) {
+            JsonObject profile = read(profileFile);
+            if (profile != null) {
+                applyAll(profile, false);
+                writeActiveFile();
+                return;
+            }
+        }
+
+        // 3. fallback
+        if (root != null) applyAll(root, false);
+        writeActiveFile();
     }
 
+    /** Сохраняет текущее состояние в undetected.json. Профили НЕ трогает. */
     public static void save() {
         JsonObject previous = read(FILE);
         JsonObject root = new JsonObject();
@@ -51,32 +82,57 @@ public final class BfbConfig {
         if (ClickGuiScreen.hasLayout()) root.add("gui", ClickGuiScreen.exportGui());
         else if (previous != null && previous.has("gui")) root.add("gui", previous.get("gui"));
 
-        // HUD позиции (для Potions, Cooldowns, Keybinds и т.д.)
         root.add("hud_positions", HudEditor.toJson());
-
         root.add("modules", modules());
         write(FILE, root);
-        if (!active.isBlank()) write(PROFILES.resolve(safe(active) + ".json"), root);
+        writeActiveFile();
+        autoBackup();
     }
 
+    /** Явно сохраняет профиль в configs/<name>.json. */
     public static void saveProfile(String name) {
         active = safe(name);
-        save();
+
+        JsonObject root = new JsonObject();
+        root.addProperty("profile", active);
+        if (ClickGuiScreen.hasLayout()) root.add("gui", ClickGuiScreen.exportGui());
+        root.add("hud_positions", HudEditor.toJson());
+        root.add("modules", modules());
+
+        write(FILE, root);
+        write(PROFILES.resolve(safe(name) + ".json"), root);
+        writeActiveFile();
+        autoBackup();
     }
 
+    /** Загружает профиль, сбрасывает все модули перед применением. */
     public static boolean loadProfile(String name) {
         JsonObject root = read(PROFILES.resolve(safe(name) + ".json"));
         if (root == null) return false;
+
+        // сброс — отключаем модули, сбрасываем бинды
+        for (CheatModule module : ModuleManager.getModules()) {
+            if (module.isEnabled()) {
+                module.applyEnabled(false);
+                try { module.onDisable(); } catch (Throwable ignored) {}
+            }
+            module.applyKey(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN);
+        }
+
         active = safe(name);
         applyAll(root, true);
         save();
+        writeActiveFile();
         return true;
     }
 
     public static void deleteProfile(String name) {
         try { Files.deleteIfExists(PROFILES.resolve(safe(name) + ".json")); }
         catch (IOException ignored) {}
-        if (active.equalsIgnoreCase(safe(name))) active = "default";
+        if (active.equalsIgnoreCase(safe(name))) {
+            active = "default";
+            writeActiveFile();
+        }
     }
 
     public static List<String> profiles() {
@@ -182,6 +238,71 @@ public final class BfbConfig {
         } catch (IOException ignored) {}
     }
 
+    // ================= active profile file =================
+
+    private static String readActiveFile() {
+        try {
+            if (!Files.exists(ACTIVE_FILE)) return null;
+            String s = Files.readString(ACTIVE_FILE).trim();
+            return s.isEmpty() ? null : s;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static void writeActiveFile() {
+        try {
+            Files.createDirectories(ACTIVE_FILE.getParent());
+            Files.writeString(ACTIVE_FILE, active);
+        } catch (IOException ignored) {}
+    }
+
+    // ================= Backup system =================
+
+    private static void autoBackup() {
+        try {
+            Files.createDirectories(BACKUPS);
+            long now = System.currentTimeMillis();
+            Path backupFile = BACKUPS.resolve("backup_" + now + ".json");
+            JsonObject root = new JsonObject();
+            root.addProperty("profile", active);
+            root.addProperty("timestamp", now);
+            if (ClickGuiScreen.hasLayout()) root.add("gui", ClickGuiScreen.exportGui());
+            root.add("hud_positions", HudEditor.toJson());
+            root.add("modules", modules());
+            write(backupFile, root);
+
+            keepLatestBackups(10);
+        } catch (Exception ignored) {}
+    }
+
+    private static void keepLatestBackups(int max) {
+        try {
+            if (!Files.isDirectory(BACKUPS)) return;
+            var paths = Files.list(BACKUPS)
+                    .filter(p -> p.getFileName().toString().startsWith("backup_"))
+                    .sorted((a, b) -> b.compareTo(a))
+                    .skip(max)
+                    .toList();
+            for (Path p : paths) {
+                Files.deleteIfExists(p);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public static boolean loadBackup(Path file) {
+        try {
+            if (!Files.exists(file)) return false;
+            JsonObject root = GSON.fromJson(Files.readString(file), JsonObject.class);
+            if (root == null) return false;
+            applyAll(root, true);
+            save();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private static String safe(String name) {
         String cleaned = name == null ? "" : name.trim().replaceAll("[\\\\/:*?\"<>|]", "");
         if (cleaned.isEmpty()) cleaned = "default";
@@ -191,7 +312,6 @@ public final class BfbConfig {
 
     // ================= Обмен конфигами =================
 
-    /** Возвращает base64-строку со всем конфигом — можно отправить другу. */
     public static String exportAsCode() {
         try {
             JsonObject root = new JsonObject();
@@ -207,7 +327,6 @@ public final class BfbConfig {
         }
     }
 
-    /** Загружает конфиг из base64-строки. */
     public static boolean importFromCode(String code) {
         try {
             byte[] compressed = Base64.getDecoder().decode(code.trim());
@@ -223,7 +342,6 @@ public final class BfbConfig {
         }
     }
 
-    /** Сохраняет конфиг в отдельный .json-файл. */
     public static boolean exportToFile(Path file) {
         try {
             Files.createDirectories(file.getParent());
@@ -239,7 +357,6 @@ public final class BfbConfig {
         }
     }
 
-    /** Загружает конфиг из отдельного .json-файла. */
     public static boolean importFromFile(Path file) {
         try {
             if (!Files.exists(file)) return false;

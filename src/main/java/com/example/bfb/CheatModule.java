@@ -13,7 +13,7 @@ import java.util.List;
 public abstract class CheatModule {
     private final String name;
     private final String description;
-    private final Category category;
+    private Category category;
     private final int defaultKeybind;
     private final List<Setting> settings = new ArrayList<>();
     private boolean enabled;
@@ -32,37 +32,40 @@ public abstract class CheatModule {
         return setting;
     }
 
-    public String getName() {
-        return name;
+    public void registerSetting(Setting setting) {
+        if (setting != null && !settings.contains(setting)) {
+            settings.add(setting);
+        }
     }
 
-    public String getDescription() {
-        return description;
-    }
+    public String getName() { return name; }
+    public String getDescription() { return description; }
+    public Category getCategory() { return category; }
+    public void setCategory(Category c) { this.category = c; }
 
-    public Category getCategory() {
-        return category;
-    }
-
-    public boolean isEnabled() {
-        return enabled;
-    }
+    public boolean isEnabled() { return enabled; }
 
     public void applyEnabled(boolean enabled) {
         this.enabled = enabled;
     }
 
-        public void setEnabled(boolean enabled) {
+    public void setEnabled(boolean enabled) {
         if (this.enabled == enabled) return;
         this.enabled = enabled;
         if (enabled) {
             playSound(true);
             onEnable();
-            NotificationSystem.push(getName() + " enabled", getCategory().getColor());
+            if (notificationsEnabled()) {
+                com.example.bfb.hud.Notifications.push(
+                        getName() + " enabled", toggleOnColor());
+            }
         } else {
             playSound(false);
             onDisable();
-            NotificationSystem.push(getName() + " disabled", 0xFF888888);
+            if (notificationsEnabled()) {
+                com.example.bfb.hud.Notifications.push(
+                        getName() + " disabled", toggleOffColor());
+            }
         }
         BfbConfig.save();
     }
@@ -77,17 +80,9 @@ public abstract class CheatModule {
         }
     }
 
-    public void toggle() {
-        setEnabled(!enabled);
-    }
-
-    public int getKeybind() {
-        return keybind;
-    }
-
-    public void applyKey(int keybind) {
-        this.keybind = keybind;
-    }
+    public void toggle() { setEnabled(!enabled); }
+    public int getKeybind() { return keybind; }
+    public void applyKey(int keybind) { this.keybind = keybind; }
 
     public void bind(int keybind) {
         this.keybind = keybind;
@@ -95,30 +90,43 @@ public abstract class CheatModule {
         BfbConfig.save();
     }
 
-    public void unbind() {
-        bind(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN);
+    public void unbind() { bind(org.lwjgl.glfw.GLFW.GLFW_KEY_UNKNOWN); }
+    public void resetKeybind() { bind(defaultKeybind); }
+    public List<Setting> getSettings() { return Collections.unmodifiableList(settings); }
+
+    public void onTick() {}
+    public void onStartTick() {}
+    public void onEnable() {}
+    public void onDisable() {}
+    public void onWorldRender(MatrixStack matrices, VertexConsumerProvider consumers, Vec3d camera) {}
+
+    private static boolean notificationsEnabled() {
+        try {
+            var vm = com.example.bfb.modules.VisualsModule.get();
+            if (vm == null) return true;
+            return vm.notifications.bool("Enabled") && vm.notifications.bool("Show toggle");
+        } catch (Throwable t) {
+            return true;
+        }
     }
 
-    public void resetKeybind() {
-        bind(defaultKeybind);
+    private static int toggleOnColor() {
+        try {
+            var vm = com.example.bfb.modules.VisualsModule.get();
+            if (vm == null) return 0xFF55FF55;
+            return 0xFF000000 | (vm.notifications.colorRgb("Toggle on color") & 0xFFFFFF);
+        } catch (Throwable t) {
+            return 0xFF55FF55;
+        }
     }
 
-    public List<Setting> getSettings() {
-        return Collections.unmodifiableList(settings);
-    }
-
-    public void onTick() {
-    }
-
-    public void onStartTick() {
-    }
-
-    public void onEnable() {
-    }
-
-    public void onDisable() {
-    }
-
-    public void onWorldRender(MatrixStack matrices, VertexConsumerProvider consumers, Vec3d camera) {
+    private static int toggleOffColor() {
+        try {
+            var vm = com.example.bfb.modules.VisualsModule.get();
+            if (vm == null) return 0xFF888888;
+            return 0xFF000000 | (vm.notifications.colorRgb("Toggle off color") & 0xFFFFFF);
+        } catch (Throwable t) {
+            return 0xFF888888;
+        }
     }
 }

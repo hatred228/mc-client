@@ -12,6 +12,7 @@ public class WorldVisualsModule extends CheatModule {
     public final ModeSetting weather = add(new ModeSetting("Weather", "Default", "Default", "Clear", "No fog", "No rain", "Rain", "Rain fog"));
     public final BooleanSetting colorClouds = add(new BooleanSetting("Cloud color", false));
     public final ColorSetting clouds = add(new ColorSetting("Clouds", 0xD8E4FF));
+    public final BooleanSetting hideClouds = add(new BooleanSetting("Hide clouds", false));
 
     public WorldVisualsModule() {
         super("World", "Fog, rain and cloud color", Category.RENDER, GLFW.GLFW_KEY_UNKNOWN);

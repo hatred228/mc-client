@@ -35,6 +35,11 @@ public final class ScriptManager {
             --     end
             --   end
             -- end)
+            --
+            -- Rotation helpers:
+            --   bfb.look(yaw, pitch)        -- camera (visible to player)
+            --   bfb.silentLook(yaw, pitch)  -- silent (undetectable rotation)
+            --   bfb.look()                  -- read current camera or silent yaw/pitch
             """;
 
     private static final Map<String, List<String>> OWNED = new HashMap<>();
@@ -207,6 +212,7 @@ public final class ScriptManager {
     private static void run(Path file) throws IOException {
         Globals globals = JsePlatform.standardGlobals();
         LuaTable api = new LuaTable();
+
         api.set("module", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -224,6 +230,7 @@ public final class ScriptManager {
                 return table;
             }
         });
+
         api.set("chat", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -234,6 +241,7 @@ public final class ScriptManager {
                 return LuaValue.NIL;
             }
         });
+
         api.set("say", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -244,6 +252,7 @@ public final class ScriptManager {
                 return LuaValue.NIL;
             }
         });
+
         api.set("enabled", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -251,6 +260,7 @@ public final class ScriptManager {
                 return LuaValue.valueOf(module != null && module.isEnabled());
             }
         });
+
         api.set("toggle", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -259,6 +269,7 @@ public final class ScriptManager {
                 return LuaValue.NIL;
             }
         });
+
         api.set("health", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -266,6 +277,7 @@ public final class ScriptManager {
                 return LuaValue.valueOf(player == null ? 0 : player.getHealth());
             }
         });
+
         api.set("pos", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -278,20 +290,54 @@ public final class ScriptManager {
                 });
             }
         });
+
+        // === look ===
+        // Чтение: если silent активна — возвращает silent yaw/pitch.
+        // Запись: пишет в КАМЕРУ (видимое движение мыши) — палится.
+        // Для silent наведения используй bfb.silentLook.
         api.set("look", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
                 var player = BfbMod.getClient().player;
                 if (player == null) return LuaValue.NIL;
                 if (args.narg() == 0) {
+                    float yaw = RotationManager.isActive()
+                            ? RotationManager.getYaw()
+                            : player.getYaw();
+                    float pitch = RotationManager.isActive()
+                            ? RotationManager.getPitch()
+                            : player.getPitch();
                     return LuaValue.varargsOf(new LuaValue[]{
-                            LuaValue.valueOf(player.getYaw()), LuaValue.valueOf(player.getPitch())});
+                            LuaValue.valueOf(yaw), LuaValue.valueOf(pitch)});
                 }
                 player.setYaw((float) args.checkdouble(1));
                 if (args.narg() >= 2) player.setPitch((float) args.checkdouble(2));
                 return LuaValue.NIL;
             }
         });
+
+        // === silentLook ===
+        // Записывает в RotationManager. Сервер увидит rotation, камера не сдвинется.
+        // Не палится на AC.
+        api.set("silentLook", new VarArgFunction() {
+            @Override
+            public Varargs invoke(Varargs args) {
+                var player = BfbMod.getClient().player;
+                if (player == null) return LuaValue.NIL;
+                if (args.narg() == 0) {
+                    return LuaValue.varargsOf(new LuaValue[]{
+                            LuaValue.valueOf(RotationManager.getYaw()),
+                            LuaValue.valueOf(RotationManager.getPitch())});
+                }
+                float yaw = (float) args.checkdouble(1);
+                float pitch = args.narg() >= 2
+                        ? (float) args.checkdouble(2)
+                        : RotationManager.getPitch();
+                RotationManager.set(yaw, pitch);
+                return LuaValue.NIL;
+            }
+        });
+
         api.set("mine", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -315,6 +361,7 @@ public final class ScriptManager {
                 return LuaValue.TRUE;
             }
         });
+
         api.set("block", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -326,16 +373,19 @@ public final class ScriptManager {
                         .getId(client.world.getBlockState(pos).getBlock()).toString());
             }
         });
+
         api.set("forward", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
                 var player = BfbMod.getClient().player;
                 if (player == null || player.input == null) return LuaValue.NIL;
                 boolean hold = args.optboolean(1, true);
-                player.input.playerInput = new net.minecraft.util.PlayerInput(hold, false, false, false, false, false, false);
+                player.input.playerInput = new net.minecraft.util.PlayerInput(
+                        hold, false, false, false, false, false, false);
                 return LuaValue.NIL;
             }
         });
+
         api.set("grounded", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
@@ -343,12 +393,14 @@ public final class ScriptManager {
                 return LuaValue.valueOf(player != null && player.isOnGround());
             }
         });
+
         api.set("inGui", new VarArgFunction() {
             @Override
             public Varargs invoke(Varargs args) {
                 return LuaValue.valueOf(BfbMod.getClient().currentScreen != null);
             }
         });
+
         globals.set("bfb", api);
         globals.load(Files.readString(file), file.getFileName().toString()).call();
     }

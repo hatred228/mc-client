@@ -12,10 +12,16 @@ public final class BfbRenderLayers {
     public static final RenderLayer LINE_LAYER = RenderLayer.of("bfb_lines",
             RenderSetup.builder(BfbRenderPipelines.LINES_THROUGH).translucent().expectedBufferSize(1024).build());
 
+    public static final RenderLayer LINE_LAYER_DEPTH = RenderLayer.of("bfb_lines_depth",
+            RenderSetup.builder(BfbRenderPipelines.LINES_DEPTH).translucent().expectedBufferSize(1024).build());
+
     public static final RenderLayer QUAD_LAYER = RenderLayer.of("bfb_quads",
             RenderSetup.builder(BfbRenderPipelines.QUADS_THROUGH).translucent().expectedBufferSize(1024).build());
 
-    // НОВЫЙ СЛОЙ ДЛЯ ГРАДИЕНТНОЙ ЗАЛИВКИ ESP
+    // НОВЫЙ: quads с depth
+    public static final RenderLayer QUAD_LAYER_DEPTH = RenderLayer.of("bfb_quads_depth",
+            RenderSetup.builder(BfbRenderPipelines.QUADS_DEPTH).translucent().expectedBufferSize(4096).build());
+
     public static final RenderLayer ESP_GRADIENT_LAYER = RenderLayer.of("bfb_esp_gradient",
             RenderSetup.builder(BfbRenderPipelines.ESP_FILLED_GRADIENT).translucent().expectedBufferSize(2048).build());
 

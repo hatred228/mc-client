@@ -5,11 +5,12 @@ import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
 import com.example.bfb.CombatUtil;
 import com.example.bfb.FriendManager;
+import com.example.bfb.RotationManager;
+import com.example.bfb.combat.CombatController;
+import com.example.bfb.combat.CombatProfile;
 import com.example.bfb.setting.BooleanSetting;
 import com.example.bfb.setting.ModeSetting;
 import com.example.bfb.setting.NumberSetting;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.attribute.EntityAttributes;
@@ -26,63 +27,56 @@ import java.util.Random;
 public class AimAssistModule extends CheatModule {
     public static Entity target;
 
-    // === targeting ===
     public final ModeSetting priority = add(new ModeSetting("Priority", "Angle",
             "Nearest", "Health", "Armor", "Angle", "Crosshair"));
     public final NumberSetting range = add(new NumberSetting("Range", 4.2, 2.5, 6.0, 0.1));
     public final NumberSetting fovThreshold = add(new NumberSetting("Assist FOV", 30.0, 10.0, 180.0, 5.0));
     public final NumberSetting switchDelay = add(new NumberSetting("Switch delay", 15, 0, 40, 1));
 
-    // === aim ===
-    public final NumberSetting smoothSpeed = add(new NumberSetting("Aim Smoothness", 12.0, 1.0, 15.0, 0.5));
-    public final NumberSetting noiseAmount = add(new NumberSetting("Micro tremor", 1.0, 0.0, 2.0, 0.1));
+    // === SMOOTHNESS ===
+    public final NumberSetting smoothness = add(new NumberSetting("Smoothness", 0.6, 0.1, 2.0, 0.05));
+    public final NumberSetting noiseAmount = add(new NumberSetting("Micro tremor", 0.5, 0.0, 2.0, 0.1));
     public final NumberSetting reactionDelay = add(new NumberSetting("Reaction delay", 4, 0, 10, 1));
-    public final NumberSetting maxAimSpeed = add(new NumberSetting("Max angular speed", 18, 10, 60, 1));
+    public final NumberSetting maxAimSpeed = add(new NumberSetting("Max angular speed", 15, 8, 40, 1));
     public final NumberSetting missChance = add(new NumberSetting("Miss chance %", 10, 0, 30, 1));
-    public final NumberSetting targetJitter = add(new NumberSetting("Target jitter", 0.10, 0.0, 0.3, 0.01));
+    public final NumberSetting targetJitter = add(new NumberSetting("Target jitter", 0.05, 0.0, 0.2, 0.01));
     public final BooleanSetting aimAtCenter = add(new BooleanSetting("Aim at body", true));
     public final BooleanSetting leadPredict = add(new BooleanSetting("Lead prediction", true));
-    public final NumberSetting leadFactor = add(new NumberSetting("Lead factor", 0.7, 0.0, 2.0, 0.1));
+    public final NumberSetting leadFactor = add(new NumberSetting("Lead factor", 0.5, 0.0, 2.0, 0.1));
     public final BooleanSetting gcdFix = add(new BooleanSetting("GCD fix", true));
 
-    // === attack ===
+    // === ATTACK ===
     public final BooleanSetting autoAttack = add(new BooleanSetting("Auto attack", false));
     public final NumberSetting attackAngle = add(new NumberSetting("Attack angle", 4.0, 1.0, 20.0, 0.5));
     public final NumberSetting cooldownReady = add(new NumberSetting("Cooldown", 0.95, 0.70, 1.00, 0.01));
     public final BooleanSetting rageMode = add(new BooleanSetting("Rage (snap)", false));
 
-    // === multitarget ===
+    // === TARGETING ===
     public final BooleanSetting multiTarget = add(new BooleanSetting("Multi target", false));
     public final NumberSetting maxTargets = add(new NumberSetting("Max targets", 2, 1, 5, 1));
-
-    // === filters ===
     public final BooleanSetting players = add(new BooleanSetting("Players", true));
     public final BooleanSetting mobs = add(new BooleanSetting("Mobs", true));
     public final BooleanSetting animals = add(new BooleanSetting("Animals", false));
     public final BooleanSetting invisible = add(new BooleanSetting("Invisible", false));
     public final BooleanSetting throughWalls = add(new BooleanSetting("Through walls", false));
 
-    // === spring state ===
+    // === STATE ===
     private float currentYawVel = 0f;
     private float currentPitchVel = 0f;
+    private float smoothYaw = Float.NaN;
+    private float smoothPitch = Float.NaN;
     private float tremorYaw = 0f;
     private float tremorPitch = 0f;
     private float tremorTargetYaw = 0f;
     private float tremorTargetPitch = 0f;
     private int tremorRefresh = 0;
-    private long lastAimFrameNanos = 0L;
 
-    // === humanization ===
     private float overshootYaw = 0f;
     private float overshootPitch = 0f;
     private int overshootTicks = 0;
     private int microPauseTicks = 0;
     private int missTicks = 0;
     private Vec3d currentTargetPoint = null;
-
-    private float aimTargetYaw = 0f;
-    private float aimTargetPitch = 0f;
-    private boolean hasAimTarget = false;
 
     private final Random RNG = new Random();
     private int attackCooldown;
@@ -102,9 +96,7 @@ public class AimAssistModule extends CheatModule {
         reactionCooldown = 0;
         lastTarget = null;
         resetSpring();
-        hasAimTarget = false;
-        lastAimFrameNanos = 0L;
-        currentTargetPoint = null;
+        RotationManager.release();
     }
 
     private void resetSpring() {
@@ -117,31 +109,13 @@ public class AimAssistModule extends CheatModule {
         overshootTicks = 0;
         microPauseTicks = 0;
         missTicks = 0;
+        smoothYaw = Float.NaN;
+        smoothPitch = Float.NaN;
     }
-
-    // ==================== PUBLIC для MouseMixin ====================
 
     public boolean hasAimTargetPublic() {
-        return hasAimTarget && !rageMode.get();
+        return target != null && !rageMode.get();
     }
-
-    public float getAimTargetYaw() { return aimTargetYaw; }
-    public float getAimTargetPitch() { return aimTargetPitch; }
-
-    public void tickMouse(double frameSeconds) {
-        var client = BfbMod.getClient();
-        var player = client.player;
-        if (player == null || !hasAimTarget || rageMode.get()) return;
-
-        float dt = (float) frameSeconds;
-        if (dt <= 0f) dt = 1f / 60f;
-        if (dt > 0.1f) dt = 0.1f;
-
-        lastAimFrameNanos = System.nanoTime();
-        aimSmoothInternal(player, aimTargetYaw, aimTargetPitch, dt);
-    }
-
-    // ==================== TICK ====================
 
     @Override
     public void onTick() {
@@ -154,8 +128,8 @@ public class AimAssistModule extends CheatModule {
         var world = client.world;
         if (player == null || world == null || client.currentScreen != null) {
             target = null;
-            hasAimTarget = false;
             currentTargetPoint = null;
+            RotationManager.release();
             return;
         }
 
@@ -169,23 +143,15 @@ public class AimAssistModule extends CheatModule {
             if (!invisible.get() && e.isInvisible() && !(e instanceof PlayerEntity)) continue;
             if (e.squaredDistanceTo(player) > reachSq) continue;
             if (!throughWalls.get() && !CombatUtil.canSee(player, e)) continue;
-
-            float[] rot = calculateRotations(player.getEyePos(), getAimPoint(e));
-            float yawDelta = Math.abs(MathHelper.wrapDegrees(rot[0] - player.getYaw()));
-            float pitchDelta = Math.abs(rot[1] - player.getPitch());
-            float totalAngle = (float) Math.hypot(yawDelta, pitchDelta);
-            if (totalAngle > fovThreshold.getFloat()) continue;
-
+            if (CombatUtil.fullAngle(player, e) > fovThreshold.getFloat()) continue;
             candidates.add(e);
         }
 
         if (candidates.isEmpty()) {
             target = null;
             lastTarget = null;
-            hasAimTarget = false;
             currentTargetPoint = null;
-            currentYawVel *= 0.5f;
-            currentPitchVel *= 0.5f;
+            RotationManager.release();
             return;
         }
 
@@ -197,7 +163,7 @@ public class AimAssistModule extends CheatModule {
                 var attr = le.getAttributeInstance(EntityAttributes.ARMOR);
                 return attr == null ? 0f : (float) attr.getValue();
             }));
-            case "Angle" -> candidates.sort(Comparator.comparingDouble(e -> angleTo(player, e)));
+            case "Angle" -> candidates.sort(Comparator.comparingDouble(e -> CombatUtil.angle(player, e)));
             case "Crosshair" -> candidates.sort(Comparator.comparingDouble(e -> crosshairScore(player, e)));
             default -> candidates.sort(Comparator.comparingDouble(e -> e.squaredDistanceTo(player)));
         }
@@ -212,24 +178,18 @@ public class AimAssistModule extends CheatModule {
             lastTarget = newTarget;
             reactionCooldown = reactionDelay.getInt();
             currentTargetPoint = null;
-            resetSpring();
         }
         target = newTarget;
 
-        if (reactionCooldown > 0) {
-            hasAimTarget = false;
-            return;
-        }
+        if (reactionCooldown > 0) return;
 
         if (missTicks > 0) {
             missTicks--;
-            hasAimTarget = false;
             return;
         }
         if (target != null && player.distanceTo(target) > 3.5
                 && RNG.nextFloat() * 100f < missChance.getFloat()) {
             missTicks = 2 + RNG.nextInt(4);
-            hasAimTarget = false;
             return;
         }
 
@@ -249,17 +209,19 @@ public class AimAssistModule extends CheatModule {
                     double dx = vel.x * ticksAhead;
                     double dy = vel.y * ticksAhead * 0.5;
                     double dz = vel.z * ticksAhead;
-                    double len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                    double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
                     double maxLead = 2.0;
                     if (len > maxLead) {
                         double scale = maxLead / len;
-                        dx *= scale; dy *= scale; dz *= scale;
+                        dx *= scale;
+                        dy *= scale;
+                        dz *= scale;
                     }
                     aimPoint = aimPoint.add(dx, dy, dz);
                 }
             }
 
-            if (currentTargetPoint == null || RNG.nextInt(4) == 0) {
+            if (currentTargetPoint == null || RNG.nextInt(6) == 0) {
                 float jit = targetJitter.getFloat();
                 double dist = player.distanceTo(ent);
                 if (dist < 2.5) jit = 0f;
@@ -276,26 +238,17 @@ public class AimAssistModule extends CheatModule {
             if (rageMode.get()) {
                 player.setYaw(ideal[0]);
                 player.setPitch(MathHelper.clamp(ideal[1], -90f, 90f));
-                resetSpring();
-                hasAimTarget = false;
-            } else {
-                aimTargetYaw = ideal[0];
-                aimTargetPitch = ideal[1];
-                hasAimTarget = true;
+                continue;
             }
 
+            // === ПЛАВНАЯ ИНТЕРПОЛЯЦИЯ ===
+            aimSmooth(player, ideal[0], ideal[1]);
+
             if (autoAttack.get() && attackCooldown == 0) {
-                float yawDelta = Math.abs(MathHelper.wrapDegrees(ideal[0] - player.getYaw()));
-                float pitchDelta = Math.abs(ideal[1] - player.getPitch());
-                float angleThresh = attackAngle.getFloat();
-
-                boolean inAngle = yawDelta <= angleThresh && pitchDelta <= angleThresh;
-                boolean inRange = player.distanceTo(ent) <= reach + 0.3f;
                 boolean ready = player.getAttackCooldownProgress(0f) >= cooldownReady.getFloat();
-
-                if (inAngle && inRange && ready) {
+                if (ready && CombatController.canAttack(player, ent)) {
                     CombatUtil.attack(ent, false);
-                    attackCooldown = 1 + RNG.nextInt(2);
+                    attackCooldown = CombatController.attackDelay();
                     hits++;
                 }
             } else if (!autoAttack.get() && hits == 0) {
@@ -304,28 +257,20 @@ public class AimAssistModule extends CheatModule {
         }
     }
 
-    // ==================== RENDER fallback ====================
-
-    @Override
-    public void onWorldRender(MatrixStack matrices, VertexConsumerProvider consumers, Vec3d camera) {
-        var client = BfbMod.getClient();
-        var player = client.player;
-        if (player == null) return;
-        if (!hasAimTarget || rageMode.get()) return;
-        if (client.currentScreen != null) return;
-
-        long now = System.nanoTime();
-        if (now - lastAimFrameNanos > 20_000_000L) {
-            float dt = 1f / 60f;
-            lastAimFrameNanos = now;
-            aimSmoothInternal(player, aimTargetYaw, aimTargetPitch, dt);
+    /**
+     * Плавное наведение через spring + smoothness factor.
+     *
+     * Ключевое отличие от CombatController.rotateTo:
+     *   - smoothness увеличивает время реакции
+     *   - GCD-snap применяется только если разница > 3 градусов
+     *   - tremor и overshoot добавляются для человечности
+     */
+    private void aimSmooth(net.minecraft.client.network.ClientPlayerEntity player,
+                           float targetYaw, float targetPitch) {
+        if (Float.isNaN(smoothYaw)) {
+            smoothYaw = player.getYaw();
+            smoothPitch = player.getPitch();
         }
-    }
-
-    // ==================== SPRING ====================
-
-    private void aimSmoothInternal(net.minecraft.client.network.ClientPlayerEntity player,
-                                   float targetYaw, float targetPitch, float dt) {
 
         if (microPauseTicks > 0) {
             microPauseTicks--;
@@ -336,94 +281,91 @@ public class AimAssistModule extends CheatModule {
             return;
         }
 
-        float yawError = MathHelper.wrapDegrees(targetYaw - player.getYaw());
-        float pitchError = targetPitch - player.getPitch();
+        float yawError = wrap(targetYaw - smoothYaw);
+        float pitchError = targetPitch - smoothPitch;
         float distance = (float) Math.hypot(yawError, pitchError);
 
-        if (distance < 0.6f) {
+        if (distance < 0.4f) {
             currentYawVel *= 0.7f;
             currentPitchVel *= 0.7f;
             return;
         }
 
-        // мягкий spring: smoothSpeed 1..15 → stiffness 200..60
-        // max при smoothSpeed=1: ω = 14.1 рад/сек, 80% за 0.21 сек
-        // min при smoothSpeed=15: ω = 7.7 рад/сек, 80% за 0.39 сек
-        float baseSpeed = MathHelper.clamp(smoothSpeed.getFloat(), 1f, 15f);
-        float stiffness = 200f - (baseSpeed - 1f) * ((200f - 60f) / 14f);
+        // smoothness 0.6 = default, 2.0 = очень плавно
+        float smoothMul = MathHelper.clamp(smoothness.getFloat(), 0.1f, 2.0f);
+        float stiffness = 45f / smoothMul;
         float damping = 2f * (float) Math.sqrt(stiffness) * 1.0f;
 
         float yawAccel = yawError * stiffness - currentYawVel * damping;
         float pitchAccel = pitchError * stiffness - currentPitchVel * damping;
 
+        float dt = 1f / 20f; // 20 TPS
         currentYawVel += yawAccel * dt;
         currentPitchVel += pitchAccel * dt;
 
-        // жёсткий клип скорости — медленнее чем в прошлой версии
-        float maxYawVel = maxAimSpeed.getFloat() * 40f;
-        float maxPitchVel = maxAimSpeed.getFloat() * 0.7f * 40f;
+        float maxYawVel = maxAimSpeed.getFloat() * 2f;
+        float maxPitchVel = maxAimSpeed.getFloat() * 1.4f;
         currentYawVel = MathHelper.clamp(currentYawVel, -maxYawVel, maxYawVel);
         currentPitchVel = MathHelper.clamp(currentPitchVel, -maxPitchVel, maxPitchVel);
 
-        float newYaw = player.getYaw() + currentYawVel * dt;
-        float newPitch = player.getPitch() + currentPitchVel * dt;
+        smoothYaw += currentYawVel * dt;
+        smoothPitch += currentPitchVel * dt;
 
-        // overshoot — редко, только при быстром движении
-        float speed = (float) Math.hypot(currentYawVel, currentPitchVel);
-        if (speed > 180f && overshootTicks == 0 && RNG.nextFloat() < 0.012f) {
-            overshootYaw = (RNG.nextFloat() - 0.5f) * 2f;
-            overshootPitch = (RNG.nextFloat() - 0.5f) * 1.2f;
-            overshootTicks = 2 + RNG.nextInt(3);
+        // tremor — только на малых дистанциях
+        float tremorAmp = noiseAmount.getFloat();
+        if (tremorAmp > 0f && distance < 20f) {
+            if (tremorRefresh-- <= 0) {
+                tremorRefresh = 3 + RNG.nextInt(5);
+                tremorTargetYaw = (float) RNG.nextGaussian() * 0.08f;
+                tremorTargetPitch = (float) RNG.nextGaussian() * 0.05f;
+            }
+            float tremorFactor = 1f - (float) Math.exp(-6f * dt);
+            tremorYaw += (tremorTargetYaw - tremorYaw) * tremorFactor;
+            tremorPitch += (tremorTargetPitch - tremorPitch) * tremorFactor;
+
+            smoothYaw += tremorYaw * tremorAmp;
+            smoothPitch += tremorPitch * tremorAmp;
         }
 
+        // overshoot на быстрых поворотах
+        float speed = (float) Math.hypot(currentYawVel, currentPitchVel);
+        if (speed > 180f && overshootTicks == 0 && RNG.nextFloat() < 0.012f) {
+            overshootYaw = (RNG.nextFloat() - 0.5f) * 1.5f;
+            overshootPitch = (RNG.nextFloat() - 0.5f) * 1.0f;
+            overshootTicks = 2 + RNG.nextInt(3);
+        }
         if (overshootTicks > 0) {
             overshootTicks--;
-            newYaw += overshootYaw;
-            newPitch += overshootPitch;
+            smoothYaw += overshootYaw;
+            smoothPitch += overshootPitch;
             overshootYaw *= 0.75f;
             overshootPitch *= 0.75f;
         }
 
-        // gaussian tremor — не синусоидальный
-        float tremorAmp = noiseAmount.getFloat();
-        if (tremorAmp > 0f && distance > 3f) {
-            if (tremorRefresh-- <= 0) {
-                tremorRefresh = 2 + RNG.nextInt(4);
-                tremorTargetYaw = (float) RNG.nextGaussian() * 0.10f;
-                tremorTargetPitch = (float) RNG.nextGaussian() * 0.06f;
-            }
-            float tremorFactor = 1f - (float) Math.exp(-8f * dt);
-            tremorYaw += (tremorTargetYaw - tremorYaw) * tremorFactor;
-            tremorPitch += (tremorTargetPitch - tremorPitch) * tremorFactor;
-
-            newYaw += tremorYaw * tremorAmp;
-            newPitch += tremorPitch * tremorAmp;
-        } else if (distance <= 3f) {
-            tremorYaw *= 0.85f;
-            tremorPitch *= 0.85f;
+        // GCD-snap — только если ротация уже близко к цели
+        if (gcdFix.get() && distance < 10f) {
+            float gcd = gcd(player);
+            smoothYaw = Math.round(smoothYaw / gcd) * gcd;
+            smoothPitch = Math.round(smoothPitch / gcd) * gcd;
         }
 
-        // GCD
-        if (gcdFix.get()) {
-            float g = gcd();
-            newYaw = applyGcd(player.getYaw(), newYaw, g);
-            newPitch = applyGcd(player.getPitch(), newPitch, g);
-        }
+        smoothPitch = MathHelper.clamp(smoothPitch, -90f, 90f);
 
-        player.setYaw(newYaw);
-        player.setPitch(MathHelper.clamp(newPitch, -90f, 90f));
+        // Отправляем rotation
+        CombatProfile profile = CombatController.profile();
+        if (profile.silentRotation()) {
+            RotationManager.setAndSend(smoothYaw, smoothPitch, 4);
+        } else {
+            player.setYaw(smoothYaw);
+            player.setPitch(smoothPitch);
+        }
     }
 
-    private static float gcd() {
+    private static float gcd(net.minecraft.client.network.ClientPlayerEntity player) {
         var mc = BfbMod.getClient();
         double sens = mc.options.getMouseSensitivity().getValue();
         float f = (float) (sens * 0.6 + 0.2);
         return Math.max(1.0e-5f, f * f * f * 1.2f);
-    }
-
-    private static float applyGcd(float from, float to, float gcd) {
-        float delta = MathHelper.wrapDegrees(to - from);
-        return from + Math.round(delta / gcd) * gcd;
     }
 
     private Vec3d getAimPoint(Entity e) {
@@ -431,11 +373,6 @@ public class AimAssistModule extends CheatModule {
         var box = e.getBoundingBox();
         double y = box.minY + (box.maxY - box.minY) * 0.62;
         return new Vec3d(e.getX(), y, e.getZ());
-    }
-
-    private static double angleTo(net.minecraft.client.network.ClientPlayerEntity player, Entity e) {
-        float[] rot = calculateRotations(player.getEyePos(), e.getBoundingBox().getCenter());
-        return Math.abs(MathHelper.wrapDegrees(rot[0] - player.getYaw()));
     }
 
     private static double crosshairScore(net.minecraft.client.network.ClientPlayerEntity player, Entity e) {
@@ -454,5 +391,12 @@ public class AimAssistModule extends CheatModule {
         float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
         float pitch = (float) (-Math.toDegrees(Math.atan2(dy, flat)));
         return new float[]{yaw, pitch};
+    }
+
+    private static float wrap(float d) {
+        d %= 360f;
+        if (d >= 180f) d -= 360f;
+        if (d < -180f) d += 360f;
+        return d;
     }
 }

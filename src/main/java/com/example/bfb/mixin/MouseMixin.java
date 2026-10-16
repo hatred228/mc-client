@@ -13,12 +13,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Mouse.class)
 public class MouseMixin {
 
-    /**
-     * Перед vanilla updateMouse:
-     *  - если AimAssist активен и есть цель — берём управление камерой на себя,
-     *    mouse delta от игрока игнорируется (убирает конфликт mouse+AimAssist).
-     *  - всегда вызываем Freecam.onFrame если модуль активен.
-     */
     @Inject(method = "updateMouse", at = @At("HEAD"), cancellable = true)
     private void bfb$aimAssistMouse(double frameSeconds, CallbackInfo ci) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -37,10 +31,8 @@ public class MouseMixin {
             return;   // пускаем vanilla — мышь работает нормально
         }
 
-        // AimAssist берёт управление камерой
-        aim.tickMouse(frameSeconds);
-
-        // блокируем vanilla updateMouse — mouse delta не применяется
+        // AimAssist берёт управление камерой — rotation идёт через CombatController
+        // в onTick модуля, здесь только блокируем vanilla updateMouse
         ci.cancel();
     }
 }

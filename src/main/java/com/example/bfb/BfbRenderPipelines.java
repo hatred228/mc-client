@@ -8,7 +8,6 @@ import net.minecraft.util.Identifier;
 
 public final class BfbRenderPipelines {
 
-    // === ЛИНИИ СКВОЗЬ СТЕНЫ (для outline) ===
     public static final RenderPipeline LINES_THROUGH = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.RENDERTYPE_LINES_SNIPPET)
                     .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/lines_through"))
@@ -16,7 +15,13 @@ public final class BfbRenderPipelines {
                     .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
                     .build());
 
-    // === ЗАЛИВКА СКВОЗЬ СТЕНЫ (для Chams flat, ESP fill) ===
+    public static final RenderPipeline LINES_DEPTH = RenderPipelines.register(
+            RenderPipeline.builder(RenderPipelines.RENDERTYPE_LINES_SNIPPET)
+                    .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/lines_depth"))
+                    .withDepthWrite(false)
+                    .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
+                    .build());
+
     public static final RenderPipeline QUADS_THROUGH = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.POSITION_COLOR_SNIPPET)
                     .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/quads_through"))
@@ -26,7 +31,16 @@ public final class BfbRenderPipelines {
                     .withBlend(BlendFunction.TRANSLUCENT)
                     .build());
 
-    // === ГРАДИЕНТНАЯ ЗАЛИВКА СКВОЗЬ СТЕНЫ (для ESP gradient fill) ===
+    // НОВЫЙ: quads с depth test — для плавного горизонта skybox
+    public static final RenderPipeline QUADS_DEPTH = RenderPipelines.register(
+            RenderPipeline.builder(RenderPipelines.POSITION_COLOR_SNIPPET)
+                    .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/quads_depth"))
+                    .withCull(false)
+                    .withDepthWrite(false)
+                    .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
+                    .withBlend(BlendFunction.TRANSLUCENT)
+                    .build());
+
     public static final RenderPipeline ESP_FILLED_GRADIENT = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.POSITION_COLOR_SNIPPET)
                     .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/esp_filled_gradient"))
@@ -36,7 +50,6 @@ public final class BfbRenderPipelines {
                     .withBlend(BlendFunction.TRANSLUCENT)
                     .build());
 
-    // === CHAMS МОДЕЛЬ (сквозь стены, текстурированная) ===
     public static final RenderPipeline CHAMS_TEXTURED = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.ENTITY_SNIPPET)
                     .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/chams_textured"))
@@ -46,7 +59,6 @@ public final class BfbRenderPipelines {
                     .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
                     .build());
 
-    // === CHAMS ЦВЕТНАЯ ЗАЛИВКА ===
     public static final RenderPipeline CHAMS_COLOR = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.POSITION_COLOR_SNIPPET)
                     .withLocation(Identifier.of(BfbMod.MOD_ID, "pipeline/chams_color"))

@@ -1,12 +1,23 @@
 package com.example.bfb.modules;
 
-import com.example.bfb.AnticheatBypass;
 import com.example.bfb.BfbMod;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
+import com.example.bfb.CombatUtil;
 import com.example.bfb.setting.NumberSetting;
+import net.minecraft.util.Hand;
 import org.lwjgl.glfw.GLFW;
 
+/**
+ * AntiAFK — чтобы сервер не кикал за неактивность.
+ *
+ * Раньше: silent rotation + swing + jump каждые 40 сек.
+ * Проблема: rotation через AnticheatBypass.smoothLook давала резкий snap.
+ *
+ * Теперь: только swing + микро-движение через addVelocity.
+ * Плюс — jump если на земле, но только раз в 40 сек.
+ * Сервер видит активность.
+ */
 public class AntiAFKModule extends CheatModule {
     public final NumberSetting seconds = add(new NumberSetting("Seconds", 40, 10, 180, 5));
     private int ticks;
@@ -17,18 +28,29 @@ public class AntiAFKModule extends CheatModule {
 
     @Override
     public void onTick() {
-        var player = BfbMod.getClient().player;
+        var client = BfbMod.getClient();
+        var player = client.player;
         if (player == null) return;
+
         if (++ticks < seconds.getInt() * 20) return;
         ticks = 0;
-        player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
-        // silent rotation вместо setYaw — Matrix палит резкий snap
-        float[] rot = AnticheatBypass.lookAt(player.getEyePos(),
-                player.getEyePos().add(player.getRotationVec(1f).multiply(3)).add(0.1, 0, 0));
-        AnticheatBypass.smoothLook(player, rot[0], rot[1]);
+
+        // swingHand — самый безопасный признак активности
+        player.swingHand(Hand.MAIN_HAND);
+
+        // небольшой рывок вперёд через input override — не setVelocity
+        // (setVelocity даёт мгновенную дельту = flag на Intave/Vulcan)
+        // Вместо этого — просто jump если на земле
         if (player.isOnGround()) {
-            var velocity = player.getVelocity();
-            player.setVelocity(velocity.x, 0.42, velocity.z);
+            player.jump();
+        } else {
+            // в воздухе — микро addVelocity (мало палится)
+            player.addVelocity(0, 0.02, 0);
         }
+    }
+
+    @Override
+    public void onDisable() {
+        ticks = 0;
     }
 }

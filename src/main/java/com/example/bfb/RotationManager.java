@@ -2,79 +2,105 @@ package com.example.bfb;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.util.math.MathHelper;
 
-/**
- * Единственный источник правды для server-side rotation.
- * Камера (player.getYaw/getPitch) не трогается — silent rotation.
- *
- * Все модули пишут сюда. ClientPlayNetworkHandlerMixin подменяет
- * yaw/pitch в исходящих PlayerMoveC2SPacket по этим значениям.
- */
 public final class RotationManager {
 
     private static final MinecraftClient mc = MinecraftClient.getInstance();
 
+    private static final RotationTrajectory trajectory = new RotationTrajectory();
     private static float serverYaw;
     private static float serverPitch;
-    private static float lastSentYaw;
-    private static float lastSentPitch;
     private static boolean active;
-    private static int holdTicks;
+    private static long lastUpdateMs;
     private static ClientPlayerEntity lastPlayer;
+
+    private static int preAimTicks = 0;
 
     private RotationManager() {}
 
     public static void tick(ClientPlayerEntity player) {
         if (player == null) {
-            if (lastPlayer != null) {
-                clear();
-                lastPlayer = null;
-            }
+            if (lastPlayer != null) { clear(); lastPlayer = null; }
             return;
         }
-        if (lastPlayer != player) {
-            init(player);
-            lastPlayer = player;
-        }
-        if (holdTicks > 0) {
-            holdTicks--;
-            if (holdTicks == 0) active = false;
+        if (lastPlayer != player) { init(player); lastPlayer = player; }
+
+        if (preAimTicks > 0) preAimTicks--;
+
+        if (trajectory.isActive()) {
+            trajectory.update();
+            serverYaw = trajectory.getCurrentYaw();
+            serverPitch = trajectory.getCurrentPitch();
+            lastUpdateMs = System.currentTimeMillis();
+            if (!trajectory.isActive()) active = true;
         }
     }
 
     public static void init(ClientPlayerEntity player) {
         serverYaw = player.getYaw();
         serverPitch = player.getPitch();
-        lastSentYaw = serverYaw;
-        lastSentPitch = serverPitch;
         active = false;
-        holdTicks = 0;
+        trajectory.stop();
+        lastUpdateMs = 0L;
+        preAimTicks = 0;
     }
 
+    /** Мгновенный — для старого API. */
     public static void set(float yaw, float pitch) {
-        serverYaw = yaw;
-        serverPitch = MathHelper.clamp(pitch, -90f, 90f);
+        float fromYaw = active ? serverYaw : (mc.player != null ? mc.player.getYaw() : 0f);
+        float fromPitch = active ? serverPitch : (mc.player != null ? mc.player.getPitch() : 0f);
+        trajectory.start(fromYaw, fromPitch, yaw, pitch, 1);
         active = true;
-        holdTicks = 0;
     }
 
     public static void set(float yaw, float pitch, int holdForTicks) {
         set(yaw, pitch);
-        holdTicks = holdForTicks;
     }
 
-    /** Отпустить через 2 тика — без snap-back на камеру. */
+    /** Плавный поворот за N тиков. */
+    public static void startRotation(float yaw, float pitch, int ticks) {
+        float fromYaw = active ? serverYaw : (mc.player != null ? mc.player.getYaw() : 0f);
+        float fromPitch = active ? serverPitch : (mc.player != null ? mc.player.getPitch() : 0f);
+        trajectory.start(fromYaw, fromPitch, yaw, pitch, ticks);
+        active = true;
+    }
+
+    /** Смена цели без пересоздания trajectory — плавно. */
+    public static void retarget(float yaw, float pitch) {
+        if (trajectory.isActive()) {
+            trajectory.retarget(yaw, pitch);
+        } else {
+            startRotation(yaw, pitch, 12);
+        }
+    }
+
+    /** Прогресс trajectory (0-1). */
+    public static float progress() {
+        return trajectory.progress();
+    }
+
+    /** Pre-aim: начать поворот заранее. */
+    public static void preAim(float yaw, float pitch, int totalTicks, int preTicks) {
+        startRotation(yaw, pitch, totalTicks);
+        preAimTicks = preTicks;
+    }
+
+    public static boolean isPreAiming() { return preAimTicks > 0; }
+
     public static void release() {
-        if (active) holdTicks = 2;
+        active = false;
+        trajectory.stop();
+        preAimTicks = 0;
     }
 
     public static void clear() {
         active = false;
-        holdTicks = 0;
+        trajectory.stop();
+        preAimTicks = 0;
     }
 
     public static boolean isActive() { return active; }
+    public static boolean isTrajectoryActive() { return trajectory.isActive(); }
 
     public static float getYaw() {
         if (active) return serverYaw;
@@ -86,39 +112,48 @@ public final class RotationManager {
         return mc.player != null ? mc.player.getPitch() : 0f;
     }
 
-    public static float getLastSentYaw()   { return lastSentYaw; }
-    public static float getLastSentPitch() { return lastSentPitch; }
+    public static long lastUpdateMs() { return lastUpdateMs; }
 
-    /**
-     * Точный vanilla GCD 1.21: f = sens*0.6+0.2; gcd = f^3 * 1.2
-     * БЕЗ jitter — сервер ждёт идеально кратное.
-     */
-    public static float gcd() {
-        double sens = mc.options.getMouseSensitivity().getValue();
-        float f = (float) (sens * 0.6 + 0.2);
-        return Math.max(1.0e-5f, f * f * f * 1.2f);
+    /** GCD-chain — держит rotation кратным GCD. */
+    public static float[] gcdChain(float yaw, float pitch) {
+        float gcd = gcd();
+        float lastYaw = active ? serverYaw : 0f;
+        float lastPitch = active ? serverPitch : 0f;
+
+        float dYaw = wrap(yaw - lastYaw);
+        float dPitch = pitch - lastPitch;
+
+        float snappedDy = Math.round(dYaw / gcd) * gcd;
+        float snappedDp = Math.round(dPitch / gcd) * gcd;
+
+        return new float[]{ lastYaw + snappedDy, lastPitch + snappedDp };
     }
+
+    public static void sendNow() { /* no-op */ }
+
+    public static void setAndSend(float yaw, float pitch, int holdTicks) {
+        set(yaw, pitch);
+    }
+
+    public static float gcd() { return GcdManager.getGcd(); }
 
     public static float snap(float value, float gcd) {
         return Math.round(value / gcd) * gcd;
     }
 
-    /**
-     * Квантуем ДЕЛЬТУ от последнего отправленного — так сервер видит
-     * консистентный поток, а не плавающий абсолют.
-     */
     public static float[] applyGcd(float yaw, float pitch) {
-        float g = gcd();
-        float dYaw = MathHelper.wrapDegrees(yaw - lastSentYaw);
-        float dPitch = pitch - lastSentPitch;
-        float fYaw = lastSentYaw + Math.round(dYaw / g) * g;
-        float fPitch = lastSentPitch + Math.round(dPitch / g) * g;
-        fPitch = MathHelper.clamp(fPitch, -90f, 90f);
-        return new float[]{ fYaw, fPitch };
+        return new float[]{ snap(yaw, gcd()), snap(pitch, gcd()) };
     }
 
     public static void markSent(float yaw, float pitch) {
-        lastSentYaw = yaw;
-        lastSentPitch = pitch;
+        serverYaw = yaw;
+        serverPitch = pitch;
+    }
+
+    private static float wrap(float d) {
+        d %= 360f;
+        if (d >= 180f) d -= 360f;
+        if (d < -180f) d += 360f;
+        return d;
     }
 }

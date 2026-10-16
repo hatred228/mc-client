@@ -6,12 +6,8 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
-// === Генерация рандомного id при каждой сборке ===
-def buildId = "lib" + Long.toHexString(System.currentTimeMillis() & 0xFFFFFF)
-ext.buildId = buildId
-
 base {
-    archivesName = "lib-${buildId}"
+    archivesName = project.archives_base_name
 }
 
 repositories {
@@ -23,40 +19,16 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
     include(implementation("org.luaj:luaj-jse:3.0.1"))
+    include(implementation("org.lwjgl:lwjgl-nanovg:3.3.3"))
+    include(runtimeOnly("org.lwjgl:lwjgl-nanovg:3.3.3:natives-windows"))
 }
 
-// ============================================================
-// Замена mod_id, name, авторов и переименование mixins.json
-// ============================================================
 processResources {
     inputs.property "version", project.version
-    inputs.property "id", buildId
-    inputs.property "name", "Library Utils"
-
     filesMatching("fabric.mod.json") {
-        expand(
-            "version": project.version,
-            "id": buildId,
-            "name": "Library Utils",
-            "description": "Utility library",
-            "authors": "anon"
-        )
-    }
-
-    // переименовываем undetected.mixins.json → <buildId>.mixins.json
-    rename 'undetected\\.mixins\\.json', "${buildId}.mixins.json"
-}
-
-// после processResources — обновляем ссылку на mixins файл в fabric.mod.json
-tasks.named('processResources') {
-    doLast {
-        def f = file("$buildDir/resources/main/fabric.mod.json")
-        if (f.exists()) {
-            def text = f.text
-            text = text.replace('${id}.mixins.json', "${buildId}.mixins.json")
-            f.text = text
-        }
+        expand "version": project.version
     }
 }
 
@@ -70,6 +42,235 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
-remapJar {
-    archiveFileName = "lib.jar"
+// ============================================================
+//  OBFUSCATION PIPELINE
+// ============================================================
+
+configurations {
+    proguardTool
+}
+
+dependencies {
+    proguardTool 'com.guardsquare:proguard-base:7.6.1'
+}
+
+def ankBaseName = project.archives_base_name
+def ankVersion  = project.version
+
+def jarOf = { String suffix ->
+    return new File(project.buildDir, "libs/${ankBaseName}-${ankVersion}${suffix}")
+}
+
+def encryptedJarFile  = jarOf("-enc.jar")
+def obfuscatedJarFile = jarOf("-obf.jar")
+def mappingFile       = new File(project.buildDir, "mappings/mapping.txt")
+
+def obfuscateEnabled = { ->
+    def v = project.hasProperty('ank.obfuscate') ? project.property('ank.obfuscate') : 'true'
+    return v.toString().toBoolean()
+}
+def ankKey = { ->
+    def v = project.hasProperty('ank.key') ? project.property('ank.key') : 'CHANGE_ME_16CH!'
+    return v.toString()
+}
+
+def quoteWindows = { String s ->
+    if (s == null) return '""'
+    if (!s.contains(' ') && !s.contains('"')) return s
+    return '"' + s.replace('"', '\\"') + '"'
+}
+
+def runJava = { List<String> cmd, File workingDir ->
+    def sb = new StringBuilder()
+    cmd.eachWithIndex { String s, int i ->
+        if (i > 0) sb.append(' ')
+        sb.append(quoteWindows(s))
+    }
+    def process = Runtime.getRuntime().exec(
+            sb.toString(),
+            null,
+            workingDir ?: project.projectDir)
+
+    def outThread = new Thread({
+        process.inputStream.eachLine { line -> println line }
+    })
+    def errThread = new Thread({
+        process.errorStream.eachLine { line -> System.err.println line }
+    })
+    outThread.daemon = true
+    errThread.daemon = true
+    outThread.start()
+    errThread.start()
+
+    def exit = process.waitFor()
+    outThread.join(2000)
+    errThread.join(2000)
+
+    if (exit != 0) {
+        throw new GradleException("Process exited with code ${exit}: ${cmd.join(' ')}")
+    }
+}
+
+// -----------------------------------------------------------------
+//  stringEncrypt
+// -----------------------------------------------------------------
+tasks.register('stringEncrypt') {
+    group = 'obfuscation'
+    description = 'Encrypts string constants in compiled classes'
+    dependsOn tasks.named('remapJar')
+
+    def remappedJarFile = new File(project.buildDir,
+            "libs/${ankBaseName}-${ankVersion}.jar")
+
+    inputs.file(remappedJarFile).optional(true)
+    inputs.file(file("$rootDir/tools/string-encryptor.jar")).optional(true)
+    outputs.file(encryptedJarFile).optional(true)
+
+    doLast {
+        if (!remappedJarFile.exists()) {
+            remappedJarFile = tasks.named('remapJar').get().archiveFile.get().asFile
+        }
+        encryptedJarFile.parentFile.mkdirs()
+
+        if (!obfuscateEnabled()) {
+            logger.lifecycle("[ank] ank.obfuscate=false - skipping string encryption")
+            java.nio.file.Files.copy(
+                    remappedJarFile.toPath(),
+                    encryptedJarFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            return
+        }
+
+        def toolsJar = file("$rootDir/tools/string-encryptor.jar")
+        if (!toolsJar.exists()) {
+            throw new GradleException("[ank] tools/string-encryptor.jar missing")
+        }
+
+        def javaBin = new File(System.getProperty('java.home'), 'bin/java').absolutePath
+        runJava([
+                javaBin,
+                '-cp', toolsJar.absolutePath,
+                'com.ank.StringEncryptorMain',
+                remappedJarFile.absolutePath,
+                encryptedJarFile.absolutePath,
+                ankKey(),
+                'com.example.bfb',
+                '!com.example.bfb.mixin',
+                '!com.example.bfb.BfbMod',
+                '!com.example.bfb.AnkStrings'
+        ], project.projectDir)
+
+        logger.lifecycle("[ank] string encryption -> ${encryptedJarFile.name}")
+    }
+}
+
+// -----------------------------------------------------------------
+//  proguardJar
+// -----------------------------------------------------------------
+tasks.register('proguardJar') {
+    group = 'obfuscation'
+    description = 'Runs ProGuard on encrypted jar'
+    dependsOn tasks.named('stringEncrypt')
+
+    inputs.file(encryptedJarFile).optional(true)
+    inputs.file(file("$rootDir/proguard-rules.pro"))
+    outputs.file(obfuscatedJarFile).optional(true)
+
+    doLast {
+        obfuscatedJarFile.parentFile.mkdirs()
+        mappingFile.parentFile.mkdirs()
+
+        if (!obfuscateEnabled()) {
+            logger.lifecycle("[ank] ank.obfuscate=false - skipping proguard")
+            java.nio.file.Files.copy(
+                    encryptedJarFile.toPath(),
+                    obfuscatedJarFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            return
+        }
+
+        // ищем JDK с jmods — java.home иногда указывает на JRE без jmods
+        def findJmodsDir = { ->
+            def candidates = []
+            if (System.getenv('JAVA_HOME')) candidates << System.getenv('JAVA_HOME')
+            candidates << System.getProperty('java.home')
+
+            def javacPaths = []
+            try {
+                def out = new ByteArrayOutputStream()
+                def p = "where.exe javac".execute()
+                p.waitForProcessOutput(out, System.err)
+                javacPaths = out.toString().readLines()
+            } catch (Throwable ignored) {}
+
+            javacPaths.each { jc ->
+                def f = new File(jc.trim())
+                if (f.exists()) candidates << f.parentFile.parentFile.absolutePath
+            }
+
+            for (String c : candidates) {
+                def jm = new File(c, 'jmods')
+                if (jm.exists() && new File(jm, 'java.base.jmod').exists()) return jm
+            }
+            return null
+        }
+
+        def jmodsDir = findJmodsDir()
+        def libraries = []
+        if (jmodsDir != null) {
+            logger.lifecycle("[ank] using jmods from ${jmodsDir.absolutePath}")
+            ['java.base','java.desktop','java.logging','java.management','java.naming',
+             'java.net.http','java.scripting','java.sql','jdk.unsupported'].each { name ->
+                def f = new File(jmodsDir, "${name}.jmod")
+                if (f.exists()) {
+                    libraries << f.absolutePath + "(!**.jar;!module-info.class)"
+                }
+            }
+        } else {
+            logger.lifecycle("[ank] no jmods found - running proguard without java libraryjars")
+        }
+
+        try {
+            configurations.minecraftLibraries.each { f ->
+                if (f.name.endsWith('.jar')) libraries << f.absolutePath
+            }
+        } catch (Throwable ignored) {}
+
+        def argsList = []
+        argsList << "@${rootDir}/proguard-rules.pro".toString()
+        argsList << '-injars'  << encryptedJarFile.absolutePath
+        argsList << '-outjars' << obfuscatedJarFile.absolutePath
+        libraries.each { lib ->
+            argsList << '-libraryjars' << lib
+        }
+        argsList << '-printmapping' << mappingFile.absolutePath
+
+        def pgCp = configurations.proguardTool.files.collect { it.absolutePath }.join(File.pathSeparator)
+
+        def cmd = [
+                new File(System.getProperty('java.home'), 'bin/java').absolutePath,
+                '-cp', pgCp,
+                'proguard.ProGuard'
+        ] + argsList
+
+        runJava(cmd, project.projectDir)
+
+        logger.lifecycle("[ank] proguard -> ${obfuscatedJarFile.name}")
+    }
+}
+
+// -----------------------------------------------------------------
+//  obfuscatedJar
+// -----------------------------------------------------------------
+tasks.register('obfuscatedJar', Copy) {
+    group = 'obfuscation'
+    description = 'Final obfuscated mod jar'
+    dependsOn tasks.named('proguardJar')
+    from obfuscatedJarFile
+    into layout.buildDirectory.dir("obf")
+    rename { "${ankBaseName}-${ankVersion}.jar" }
+}
+
+tasks.named('build') {
+    finalizedBy tasks.named('obfuscatedJar')
 }

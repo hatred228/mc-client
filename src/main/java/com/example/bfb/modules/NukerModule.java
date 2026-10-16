@@ -4,6 +4,7 @@ import com.example.bfb.BfbMod;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
 import com.example.bfb.RenderUtil;
+import com.example.bfb.combat.CombatController;
 import com.example.bfb.setting.ModeSetting;
 import com.example.bfb.setting.NumberSetting;
 import net.minecraft.block.BlockState;
@@ -12,21 +13,28 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Random;
 
+/**
+ * Nuker — ломает блоки в радиусе или выделенной зоне.
+ *
+ * РАНЬШЕ: delay фиксированный 5 тиков — палился как "постоянный паттерн".
+ *
+ * ТЕПЕРЬ: delay через профиль античита. Grim/Polar — 8-11 тиков,
+ * Vulcan/Matrix — 5-7. Без своего swingHandC2SPacket — interactManager
+ * сам отправляет нужные пакеты.
+ */
 public class NukerModule extends CheatModule {
     public static BlockPos pos1;
     public static BlockPos pos2;
@@ -42,7 +50,7 @@ public class NukerModule extends CheatModule {
     private boolean wasUse;
 
     public NukerModule() {
-        super("Nuker", "Breaks blocks without rotation", Category.WORLD, GLFW.GLFW_KEY_UNKNOWN);
+        super("Nuker", "Breaks blocks around you", Category.WORLD, GLFW.GLFW_KEY_UNKNOWN);
     }
 
     @Override
@@ -50,6 +58,7 @@ public class NukerModule extends CheatModule {
         MinecraftClient client = BfbMod.getClient();
         ClientPlayerEntity player = client.player;
         if (player == null || client.world == null || client.interactionManager == null) return;
+
         mark(client);
         if (wait > 0) { wait--; return; }
 
@@ -57,18 +66,24 @@ public class NukerModule extends CheatModule {
         BlockPos target = mode.is("Selection") ? nextSelection(origin) : nextRadius(origin);
         if (target == null) return;
 
-        // reach <= 4.2
+        // reach limit — 4.2 блока
         if (player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(target)) > 17.64) return;
-        // LOS через raycast
+        // видно ли блок (LOS)
         if (!canSee(player, target)) return;
 
-        // БЕЗ rotation — ломаем только если смотрим (или почти смотрим)
         Direction side = facingSide(player, target);
-        client.interactionManager.updateBlockBreakingProgress(target, side);
-        player.networkHandler.sendPacket(new HandSwingC2SPacket(Hand.MAIN_HAND));
 
-        int base = delay.getInt();
-        wait = base + RNG.nextInt(3);
+        // updateBlockBreakingProgress сам отправляет и swing, и break packet
+        client.interactionManager.updateBlockBreakingProgress(target, side);
+
+        // === задержка по профилю античита ===
+        int base = switch (CombatController.mode()) {
+            case GRIM, POLAR, REALLYWORLD, DONUTSMP -> 8 + RNG.nextInt(4);
+            case SPOOKYTIME -> 7 + RNG.nextInt(3);
+            case VULCAN, MATRIX -> 5 + RNG.nextInt(3);
+            default -> 4 + RNG.nextInt(2);
+        };
+        wait = Math.max(delay.getInt(), base);
     }
 
     private static boolean canSee(ClientPlayerEntity player, BlockPos pos) {
@@ -153,10 +168,12 @@ public class NukerModule extends CheatModule {
                 || state.isIn(BlockTags.COPPER_ORES) || state.isIn(BlockTags.GOLD_ORES)
                 || state.isIn(BlockTags.REDSTONE_ORES) || state.isIn(BlockTags.LAPIS_ORES)
                 || state.isIn(BlockTags.DIAMOND_ORES) || state.isIn(BlockTags.EMERALD_ORES)
-                || state.isOf(Blocks.ANCIENT_DEBRIS) || state.isOf(Blocks.NETHER_QUARTZ_ORE) || state.isOf(Blocks.NETHER_GOLD_ORE);
+                || state.isOf(Blocks.ANCIENT_DEBRIS) || state.isOf(Blocks.NETHER_QUARTZ_ORE)
+                || state.isOf(Blocks.NETHER_GOLD_ORE);
         if (blocks.is("Wood")) return state.isIn(BlockTags.LOGS);
-        if (blocks.is("Stone")) return state.isIn(BlockTags.BASE_STONE_OVERWORLD) || state.isOf(Blocks.NETHERRACK)
-                || state.isOf(Blocks.END_STONE) || state.isOf(Blocks.BLACKSTONE) || state.isOf(Blocks.DEEPSLATE);
+        if (blocks.is("Stone")) return state.isIn(BlockTags.BASE_STONE_OVERWORLD)
+                || state.isOf(Blocks.NETHERRACK) || state.isOf(Blocks.END_STONE)
+                || state.isOf(Blocks.BLACKSTONE) || state.isOf(Blocks.DEEPSLATE);
         return true;
     }
 
@@ -173,10 +190,12 @@ public class NukerModule extends CheatModule {
             wasUse = false;
             return;
         }
-        boolean down = GLFW.glfwGetMouseButton(client.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS;
+        boolean down = GLFW.glfwGetMouseButton(client.getWindow().getHandle(),
+                GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS;
         boolean pressed = down && !wasUse;
         wasUse = down;
-        if (!pressed || !(client.crosshairTarget instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) return;
+        if (!pressed || !(client.crosshairTarget instanceof BlockHitResult hit)
+                || hit.getType() != HitResult.Type.BLOCK) return;
         if (pos1 == null || pos2 != null) {
             pos1 = hit.getBlockPos();
             pos2 = null;

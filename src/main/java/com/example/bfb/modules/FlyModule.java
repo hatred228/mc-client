@@ -4,9 +4,12 @@ import com.example.bfb.BfbMod;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
 import com.example.bfb.CombatUtil;
+import com.example.bfb.GcdManager;
+import com.example.bfb.RotationManager;
 import com.example.bfb.setting.ModeSetting;
 import com.example.bfb.setting.NumberSetting;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import org.lwjgl.glfw.GLFW;
 
 public class FlyModule extends CheatModule {
@@ -30,19 +33,54 @@ public class FlyModule extends CheatModule {
             player.fallDistance = 0;
             return;
         }
-        // Motion — только через пакеты, не трогаем velocity клиента
+        // Motion — через GCD-compliant пакеты для Intave compatibility
         if (player.networkHandler == null) return;
+
         double[] wish = CombatUtil.wish(player);
         double y = 0;
         if (client.options.jumpKey.isPressed()) y += speed.get() * 0.2;
         if (client.options.sneakKey.isPressed()) y -= speed.get() * 0.2;
+
         double nx = player.getX() + wish[0] * speed.get() * 0.15;
         double nz = player.getZ() + wish[1] * speed.get() * 0.15;
         double ny = player.getY() + y;
-        player.networkHandler.sendPacket(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.PositionAndOnGround(
-                nx, ny, nz, false, player.horizontalCollision));
-        player.setPosition(nx, ny, nz);
+
+        // Применяем GCD к позиции для Intave compatibility
+        // Используем GcdManager для синхронизированного снапа
+        float[] gcdSnap = GcdManager.applyGcd(
+            (float) player.getYaw(),
+            (float) player.getPitch()
+        );
+
+        // Отправляем пакет с delta-позицией (как при движении)
+        double dx = nx - player.getX();
+        double dz = nz - player.getZ();
+        double dy = ny - player.getY();
+
+        // GCD для позиции - сервер ожидает определённые интервалы
+        float gcd = GcdManager.getGcd();
+        double snappedDx = Math.round(dx / gcd) * gcd;
+        double snappedDy = Math.round(dy / gcd) * gcd;
+        double snappedDz = Math.round(dz / gcd) * gcd;
+
+        double finalX = player.getX() + snappedDx;
+        double finalY = player.getY() + snappedDy;
+        double finalZ = player.getZ() + snappedDz;
+
+        player.networkHandler.sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(
+                finalX, finalY, finalZ, false, player.horizontalCollision));
+
+        player.setPosition(finalX, finalY, finalZ);
         player.fallDistance = 0;
+
+        // Синхронизируем ротацию через RotationManager
+        if (RotationManager.isActive()) {
+            float[] fixed = GcdManager.applyGcd(
+                RotationManager.getYaw(),
+                RotationManager.getPitch()
+            );
+            RotationManager.markSent(fixed[0], fixed[1]);
+        }
     }
 
     @Override

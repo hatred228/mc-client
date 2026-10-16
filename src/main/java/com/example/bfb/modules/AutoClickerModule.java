@@ -4,6 +4,7 @@ import com.example.bfb.BfbMod;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
 import com.example.bfb.CombatUtil;
+import com.example.bfb.combat.CombatController;
 import com.example.bfb.mixin.KeyBindingAccessor;
 import com.example.bfb.setting.BooleanSetting;
 import com.example.bfb.setting.ModeSetting;
@@ -48,23 +49,14 @@ public class AutoClickerModule extends CheatModule {
 
         if (burstCooldown > 0) { burstCooldown--; ticks = 0; return; }
 
-        int min = Math.min(cpsMin.getInt(), cpsMax.getInt());
-        int max = Math.max(cpsMin.getInt(), cpsMax.getInt());
-        double mean = (min + max) / 2.0;
-        double stdDev = (max - min) / 4.0;
-
-        double cps = mean + RNG.nextGaussian() * stdDev;
-        cps = Math.max(min, Math.min(max, cps));
-
-        int base = Math.max(1, (int) Math.round(20.0 / cps));
-        int gap = Math.max(1, base + RNG.nextInt(3) - 1);
+        // === INTERVAL — через CombatController профиль античита ===
+        int gap = CombatController.attackDelay();
 
         if (++ticks < gap) return;
         ticks = 0;
 
         Entity target = aimed(client, player);
         if (target != null && player.getAttackCooldownProgress(0.5f) >= 0.9f) {
-            // без reach spoof — это обычный кликер
             CombatUtil.attack(target, false);
         } else {
             player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
@@ -87,7 +79,6 @@ public class AutoClickerModule extends CheatModule {
         Box area = player.getBoundingBox().expand(3.0);
         for (LivingEntity entity : player.getEntityWorld().getEntitiesByClass(LivingEntity.class, area, candidate ->
                 CombatUtil.accept(candidate, player, players.get(), mobs.get(), animals.get()))) {
-            // CombatUtil.angle читает silent yaw — если silent rotation активна, кликер бьёт по её цели
             if (CombatUtil.angle(player, entity) > 30f) continue;
             double dist = entity.squaredDistanceTo(player);
             if (dist < bestDist) { bestDist = dist; best = entity; }

@@ -1,12 +1,12 @@
 {
-  "key.bigfatboy.gui": "Big Fat Boy menu",
-  "key.bigfatboy.inventorymove": "Inventory move",
-  "key.bigfatboy.nojumpdelay": "No jump delay",
-  "key.bigfatboy.autotool": "Auto tool",
-  "key.bigfatboy.camera": "Camera",
-  "key.bigfatboy.potions": "Potions",
-  "key.bigfatboy.clickpearl": "Middle-click pearl",
-  "key.bigfatboy.nuker1": "Nuker position 1",
-  "key.bigfatboy.nuker2": "Nuker position 2",
-  "key.category.big-fat-boy.main": "Big Fat Boy"
+  "key.undetected.gui": "Client menu",
+  "key.undetected.inventorymove": "Inventory move",
+  "key.undetected.nojumpdelay": "No jump delay",
+  "key.undetected.autotool": "Auto tool",
+  "key.undetected.camera": "Camera",
+  "key.undetected.potions": "Potions",
+  "key.undetected.clickpearl": "Middle-click pearl",
+  "key.undetected.nuker1": "Nuker position 1",
+  "key.undetected.nuker2": "Nuker position 2",
+  "key.category.undetected.main": "Undetected"
 }

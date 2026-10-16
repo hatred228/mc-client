@@ -2,17 +2,21 @@ package com.example.bfb.mixin;
 
 import com.example.bfb.ModuleManager;
 import com.example.bfb.modules.HitBoxesModule;
-import com.example.bfb.modules.VelocityModule;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.util.math.Vec3d;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+/**
+ * EntityMixin — HitBoxes.
+ *
+ * ВАЖНО: setVelocityClient инжект УДАЛЁН.
+ * Сглаживание velocity делает ClientPlayNetworkHandlerMixin.onEntityVelocityUpdate.
+ * Двойное сглаживание давало неконсистентный knockback.
+ */
 @Mixin(Entity.class)
 public class EntityMixin {
 
@@ -23,16 +27,5 @@ public class EntityMixin {
         if ((Object) this == MinecraftClient.getInstance().player) return;
         if (!((Object) this instanceof LivingEntity)) return;
         cir.setReturnValue(cir.getReturnValue() + boxes.expand.getFloat());
-    }
-
-    @Inject(method = "setVelocityClient", at = @At("HEAD"), cancellable = true)
-    private void bfb$velocity(Vec3d velocity, CallbackInfo ci) {
-        if ((Object) this != MinecraftClient.getInstance().player) return;
-        VelocityModule module = ModuleManager.get(VelocityModule.class);
-        if (module == null || !module.isEnabled()) return;
-        double[] out = module.smooth(velocity.x, velocity.y, velocity.z);
-        Entity self = (Entity) (Object) this;
-        self.setVelocity(out[0], out[1], out[2]);
-        ci.cancel();
     }
 }

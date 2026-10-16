@@ -3,6 +3,8 @@ package com.example.bfb.modules;
 import com.example.bfb.BfbMod;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
+import com.example.bfb.combat.CombatController;
+import com.example.bfb.combat.CombatMode;
 import com.example.bfb.setting.ModeSetting;
 import net.minecraft.item.BowItem;
 import net.minecraft.util.Hand;
@@ -17,7 +19,7 @@ public class FastBowModule extends CheatModule {
     private int wait;
 
     public FastBowModule() {
-        super("FastBow", "Bypasses bow delay (Matrix safe)", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);
+        super("FastBow", "Bypasses bow delay", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);
     }
 
     @Override
@@ -32,19 +34,34 @@ public class FastBowModule extends CheatModule {
         if (hand == null) return;
         if (mode.is("Legit") && !client.options.useKey.isPressed()) return;
 
-        // 350-450ms рандом (21-27 тиков)
-        int delayTicks = 21 + RNG.nextInt(7); // 350-450ms
+        // === Задержка по профилю античита ===
+        int baseDelay = switch (CombatController.mode()) {
+            case GRIM, POLAR, REALLYWORLD, DONUTSMP -> 22 + RNG.nextInt(6); // 22-27 тиков
+            case SPOOKYTIME -> 20 + RNG.nextInt(5);
+            case VULCAN, MATRIX -> 16 + RNG.nextInt(5);
+            case VIMEMC, RAIDMINE -> 14 + RNG.nextInt(5);
+            default -> 12 + RNG.nextInt(4);
+        };
+
+        // Минимальное время натяжения тоже зависит от профиля
+        int minDraw = switch (CombatController.mode()) {
+            case GRIM, POLAR, REALLYWORLD, DONUTSMP -> 16;
+            case SPOOKYTIME -> 14;
+            default -> 12;
+        };
 
         boolean drawing = player.isUsingItem() && player.getActiveItem().getItem() instanceof BowItem;
-        if (drawing && player.getItemUseTime() >= 14) {
-            // держим лук не меньше 14 тиков (ванильное время заряда)
-            if (player.getItemUseTime() >= 14 + RNG.nextInt(3)) {
-                client.interactionManager.stopUsingItem(player);
-                wait = delayTicks;
-            }
+        if (drawing && player.getItemUseTime() >= minDraw + RNG.nextInt(3)) {
+            client.interactionManager.stopUsingItem(player);
+            wait = baseDelay;
         } else if (!player.isUsingItem()) {
             client.interactionManager.interactItem(player, hand);
             wait = 2 + RNG.nextInt(3);
         }
+    }
+
+    @Override
+    public void onDisable() {
+        wait = 0;
     }
 }

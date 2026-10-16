@@ -11,7 +11,6 @@ import com.example.bfb.setting.BooleanSetting;
 import com.example.bfb.setting.ModeSetting;
 import com.example.bfb.setting.NumberSetting;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
@@ -24,21 +23,34 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.Random;
 
+/**
+ * TargetStrafe — обход цели с ВИЗУАЛЬНЫМ вращением камеры.
+ *
+ * Отличия от прошлой версии:
+ *   1. Камера РЕАЛЬНО крутится к цели (player.setYaw/setPitch) — если
+ *      античит требует silent, это можно выключить через autoAim.
+ *   2. Движение считается относительно ЦЕЛИ, не относительно камеры —
+ *      поэтому не дёргается когда камера поворачивается.
+ *   3. Camera lock режим — камера всегда смотрит в центр цели, WASD
+ *      двигает относительно camera yaw.
+ */
 public class TargetStrafeModule extends CheatModule {
     public final ModeSetting orbitStyle = add(new ModeSetting("Orbit", "Circle",
             "Circle", "Ellipse", "Figure-8", "Square", "Triangle"));
-    public final ModeSetting mode = add(new ModeSetting("Mode", "Legit", "Legit", "Rage"));
-    public final NumberSetting radius = add(new NumberSetting("Radius X", 2.2, 1.0, 4.5, 0.1));
-    public final NumberSetting radiusY = add(new NumberSetting("Radius Y", 2.2, 1.0, 4.5, 0.1));
-    public final NumberSetting speed = add(new NumberSetting("Speed", 0.18, 0.08, 0.32, 0.02));
-    public final NumberSetting radialGain = add(new NumberSetting("Radial gain", 0.08, 0.02, 0.25, 0.01));
+    public final ModeSetting mode = add(new ModeSetting("Mode", "Legit", "Legit", "Smooth"));
+    public final NumberSetting radius = add(new NumberSetting("Radius", 2.0, 1.0, 4.0, 0.1));
+    public final NumberSetting speed = add(new NumberSetting("Speed", 0.25, 0.15, 0.5, 0.01));
+
+    // === AIM ===
+    public final BooleanSetting cameraLock = add(new BooleanSetting("Camera lock", true));
+    public final BooleanSetting silentAim = add(new BooleanSetting("Silent aim", false));
+    public final NumberSetting aimSpeed = add(new NumberSetting("Aim speed", 0.6, 0.2, 1.0, 0.05));
+
+    // === TARGET ===
     public final BooleanSetting withKillAura = add(new BooleanSetting("With KillAura", true));
-    public final BooleanSetting withAimAssist = add(new BooleanSetting("With AimAssist", true));
-    public final BooleanSetting withTriggerBot = add(new BooleanSetting("With TriggerBot", true));
-    public final BooleanSetting withCrosshair = add(new BooleanSetting("With Crosshair", false));
-    public final BooleanSetting switchOnHit = add(new BooleanSetting("Switch on hit", true));
     public final BooleanSetting visualOrbit = add(new BooleanSetting("Visual orbit", true));
     public final BooleanSetting visualDot = add(new BooleanSetting("Current pos dot", true));
+    public final BooleanSetting switchOnDamage = add(new BooleanSetting("Switch on hit", true));
 
     public static volatile int strafeDir = 0;
     public static volatile PlayerInput overrideInput = null;
@@ -48,12 +60,13 @@ public class TargetStrafeModule extends CheatModule {
     private int switchCooldown;
     private int hitCooldown;
     private float time = 0f;
-    private float speedMultiplier = 1f;
     private float orbitAngle = 0f;
+    private float visualYaw = 0f;
+    private float visualPitch = 0f;
     private Entity renderTarget;
 
     public TargetStrafeModule() {
-        super("TargetStrafe", "Orbits target with multiple styles", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);
+        super("TargetStrafe", "Orbits target with camera rotation", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);
     }
 
     @Override
@@ -63,7 +76,8 @@ public class TargetStrafeModule extends CheatModule {
         hitCooldown = 0;
         time = 0f;
         orbitAngle = 0f;
-        speedMultiplier = 1f;
+        visualYaw = Float.NaN;
+        visualPitch = Float.NaN;
     }
 
     @Override
@@ -71,10 +85,10 @@ public class TargetStrafeModule extends CheatModule {
         direction = 1;
         switchCooldown = 0;
         hitCooldown = 0;
-        speedMultiplier = 1f;
         strafeDir = 0;
         renderTarget = null;
         overrideInput = null;
+        RotationManager.release();
     }
 
     @Override
@@ -96,47 +110,71 @@ public class TargetStrafeModule extends CheatModule {
         if (target == null || !target.isAlive()) {
             strafeDir = 0;
             overrideInput = null;
+            RotationManager.release();
             return;
         }
 
-        if (switchCooldown == 0 && RNG.nextInt(140) == 0) {
-            direction = -direction;
-            switchCooldown = 100 + RNG.nextInt(80);
+        // === AIM — куда смотреть ===
+        Vec3d aimPoint = target.getBoundingBox().getCenter();
+        float[] ideal = calculateRotations(player.getEyePos(), aimPoint);
+
+        if (Float.isNaN(visualYaw)) {
+            visualYaw = player.getYaw();
+            visualPitch = player.getPitch();
         }
 
-        if (switchOnHit.get() && hitCooldown == 0 && player.hurtTime > 0) {
-            direction = -direction;
-            hitCooldown = 14;
+        // Плавное приближение камеры
+        float k = aimSpeed.getFloat();
+        float dy = wrap(ideal[0] - visualYaw);
+        float dp = ideal[1] - visualPitch;
+        visualYaw += dy * k;
+        visualPitch += dp * k;
+        visualPitch = MathHelper.clamp(visualPitch, -90f, 90f);
+
+        if (silentAim.get()) {
+            // Silent — сервер видит rotation, камера свободна
+            RotationManager.setAndSend(visualYaw, visualPitch, 4);
+        } else if (cameraLock.get()) {
+            // Camera lock — камера реально крутится к цели
+            player.setYaw(visualYaw);
+            player.setPitch(visualPitch);
         }
 
-        time += 0.05f;
-        float targetMult = 0.9f + 0.2f * (float) Math.sin(time * 0.7f) + (RNG.nextFloat() - 0.5f) * 0.05f;
-        speedMultiplier += (targetMult - speedMultiplier) * 0.03f;
-        speedMultiplier = MathHelper.clamp(speedMultiplier, 0.8f, 1.2f);
+        // === Плавное переключение направления ===
+        if (switchCooldown == 0 && RNG.nextInt(100) == 0) {
+            direction = -direction;
+            switchCooldown = 80 + RNG.nextInt(60);
+        }
 
-        double rMax = Math.max(1.0, Math.max(radius.getFloat(), radiusY.getFloat()));
-        double maxLinear = 0.26 * (speed.getFloat() / 0.18f);
-        double angularSpeed = maxLinear / rMax;
-        orbitAngle += angularSpeed * direction * 0.5;
+        if (switchOnDamage.get() && hitCooldown == 0 && player.hurtTime > 0) {
+            direction = -direction;
+            hitCooldown = 10;
+        }
+
+        // === ORBIT — позиция на орбите ===
+        time += 0.03f;
+        float targetMult = 0.9f + 0.2f * (float) Math.sin(time * 0.5f);
+        double maxLinear = 0.18 * targetMult;
+        double radiusVal = radius.getFloat();
+        double angularSpeed = maxLinear / radiusVal;
+        orbitAngle += angularSpeed * direction * 0.5f;
         orbitAngle %= (float) (Math.PI * 2);
 
-        double rx = radius.getFloat();
-        double ry = radiusY.getFloat();
-        double orbitX = 0, orbitZ = 0;
+        Vec3d targetPos = target.getEntityPos();
+        double orbitX, orbitZ;
         switch (orbitStyle.get()) {
-            case "Ellipse" -> { orbitX = Math.cos(orbitAngle) * rx; orbitZ = Math.sin(orbitAngle) * ry; }
-            case "Figure-8" -> { orbitX = Math.sin(orbitAngle) * rx; orbitZ = Math.sin(orbitAngle * 2) * ry * 0.5; }
+            case "Ellipse" -> { orbitX = Math.cos(orbitAngle) * radiusVal; orbitZ = Math.sin(orbitAngle) * radiusVal; }
+            case "Figure-8" -> { orbitX = Math.sin(orbitAngle) * radiusVal; orbitZ = Math.sin(orbitAngle * 2) * radiusVal * 0.5; }
             case "Square" -> {
                 double t = (orbitAngle / (Math.PI * 2)) * 4;
                 int side = (int) t;
                 double p = t - side;
                 switch (side) {
-                    case 0 -> { orbitX = rx * (0.5 - p); orbitZ = ry * 0.5; }
-                    case 1 -> { orbitX = -rx * 0.5; orbitZ = ry * (0.5 - p); }
-                    case 2 -> { orbitX = rx * (p - 0.5); orbitZ = -ry * 0.5; }
-                    default -> { orbitX = rx * 0.5; orbitZ = ry * (p - 0.5); }
+                    case 0 -> { orbitX = radiusVal * (0.5 - p); orbitZ = radiusVal * 0.5; }
+                    case 1 -> { orbitX = -radiusVal * 0.5; orbitZ = radiusVal * (0.5 - p); }
+                    case 2 -> { orbitX = radiusVal * (p - 0.5); orbitZ = -radiusVal * 0.5; }
+                    default -> { orbitX = radiusVal * 0.5; orbitZ = radiusVal * (p - 0.5); }
                 }
-                orbitX *= 2; orbitZ *= 2;
             }
             case "Triangle" -> {
                 double t = (orbitAngle / (Math.PI * 2)) * 3;
@@ -144,16 +182,15 @@ public class TargetStrafeModule extends CheatModule {
                 double p = t - side;
                 double angle1 = side * (Math.PI * 2 / 3);
                 double angle2 = ((side + 1) % 3) * (Math.PI * 2 / 3);
-                double x1 = Math.cos(angle1) * rx, z1 = Math.sin(angle1) * ry;
-                double x2 = Math.cos(angle2) * rx, z2 = Math.sin(angle2) * ry;
+                double x1 = Math.cos(angle1) * radiusVal, z1 = Math.sin(angle1) * radiusVal;
+                double x2 = Math.cos(angle2) * radiusVal, z2 = Math.sin(angle2) * radiusVal;
                 orbitX = x1 + (x2 - x1) * p;
                 orbitZ = z1 + (z2 - z1) * p;
             }
-            default -> { orbitX = Math.cos(orbitAngle) * rx; orbitZ = Math.sin(orbitAngle) * ry; }
+            default -> { orbitX = Math.cos(orbitAngle) * radiusVal; orbitZ = Math.sin(orbitAngle) * radiusVal; }
         }
 
-        Vec3d targetPos = target.getEntityPos();
-        Vec3d desired = new Vec3d(targetPos.x + orbitX, targetPos.y, targetPos.z + orbitZ);
+        Vec3d desired = new Vec3d(targetPos.x + orbitX, targetPos.y + 0.2, targetPos.z + orbitZ);
         Vec3d toDesired = desired.subtract(player.getEntityPos());
         double dist = toDesired.length();
         if (dist < 0.01) {
@@ -164,21 +201,31 @@ public class TargetStrafeModule extends CheatModule {
 
         Vec3d dir = toDesired.multiply(1.0 / dist);
 
-        // строим override input — движение только через WASD, без velocity nudge
-        float yawRad = (float) Math.toRadians(
-                RotationManager.isActive() ? RotationManager.getYaw() : player.getYaw()
-        );
+        // ВАЖНО: движение считаем относительно КАМЕРЫ игрока (visualYaw),
+        // не относительно цели. Иначе получаются рывки.
+        float yawRad = (float) Math.toRadians(visualYaw);
         double sin = Math.sin(yawRad);
         double cos = Math.cos(yawRad);
+
+        // forward = -sin * x + cos * z,  right = cos * x + sin * z
         double forwardDot = dir.x * (-sin) + dir.z * cos;
         double rightDot = dir.x * cos + dir.z * sin;
 
+        // Строим WASD input
         double threshold = 0.25;
-        boolean fwd = forwardDot > threshold;
-        boolean back = forwardDot < -threshold;
-        boolean left = rightDot < -threshold;
-        boolean right = rightDot > threshold;
+        boolean fwd = false;
+        boolean back = false;
+        boolean left = false;
+        boolean right = false;
 
+        // Всегда жмём forward если цель впереди
+        if (forwardDot > threshold) fwd = true;
+        else if (forwardDot < -threshold) back = true;
+
+        if (rightDot > threshold) right = true;
+        else if (rightDot < -threshold) left = true;
+
+        // Если ничего не выбрано — двигаемся вперёд (fallback)
         if (!fwd && !back && !left && !right) {
             if (Math.abs(forwardDot) > Math.abs(rightDot)) {
                 if (forwardDot > 0) fwd = true; else back = true;
@@ -187,13 +234,11 @@ public class TargetStrafeModule extends CheatModule {
             }
         }
 
-        boolean sprint = mode.is("Rage") || direction == 1;
-
         overrideInput = new PlayerInput(
                 fwd, back, left, right,
                 false,
                 player.input.playerInput.sneak(),
-                sprint
+                false
         );
 
         strafeDir = direction;
@@ -209,67 +254,85 @@ public class TargetStrafeModule extends CheatModule {
         long time = System.currentTimeMillis();
 
         if (visualOrbit.get()) {
-            int seg = 72;
+            int seg = 36;
             for (int i = 0; i < seg; i++) {
                 double t1 = i / (double) seg * Math.PI * 2;
                 double t2 = (i + 1) / (double) seg * Math.PI * 2;
                 Vec3d p1 = orbitPoint(targetPos, t1);
                 Vec3d p2 = orbitPoint(targetPos, t2);
-                float pulse = 0.5f + 0.5f * (float) Math.sin(time / 500.0 + i * 0.15);
-                int alpha = (int) (60 + 100 * pulse);
+                float pulse = 0.5f + 0.5f * (float) Math.sin(time / 500.0 + i * 0.1);
+                int alpha = (int) (40 + 80 * pulse);
                 int c = HudStyle.lerpColor(0x9C5CFF, 0xFF5CA8, i / (float) seg);
                 RenderUtil.bone(matrices, consumers, camera,
-                        new Vec3d(p1.x, targetPos.y + 0.03, p1.z),
-                        new Vec3d(p2.x, targetPos.y + 0.03, p2.z),
-                        (alpha << 24) | c, 1.4f);
+                        new Vec3d(p1.x, targetPos.y + 0.02, p1.z),
+                        new Vec3d(p2.x, targetPos.y + 0.02, p2.z),
+                        (alpha << 24) | c, 1.0f);
             }
         }
 
         if (visualDot.get()) {
             Vec3d cur = orbitPoint(targetPos, orbitAngle);
-            double ringR = 0.15;
-            int seg = 16;
+            double ringR = 0.1;
+            int seg = 8;
             for (int i = 0; i < seg; i++) {
                 double a1 = Math.PI * 2 * i / seg;
                 double a2 = Math.PI * 2 * (i + 1) / seg;
                 RenderUtil.bone(matrices, consumers, camera,
-                        new Vec3d(cur.x + Math.cos(a1) * ringR, targetPos.y + 0.06, cur.z + Math.sin(a1) * ringR),
-                        new Vec3d(cur.x + Math.cos(a2) * ringR, targetPos.y + 0.06, cur.z + Math.sin(a2) * ringR),
-                        (255 << 24) | 0xFF5CA8, 2.5f);
+                        new Vec3d(cur.x + Math.cos(a1) * ringR, targetPos.y + 0.04, cur.z + Math.sin(a1) * ringR),
+                        new Vec3d(cur.x + Math.cos(a2) * ringR, targetPos.y + 0.04, cur.z + Math.sin(a2) * ringR),
+                        (255 << 24) | 0xFF5CA8, 1.5f);
             }
         }
     }
 
+    private static float[] calculateRotations(Vec3d from, Vec3d to) {
+        double dx = to.x - from.x;
+        double dy = to.y - from.y;
+        double dz = to.z - from.z;
+        double flat = Math.sqrt(dx * dx + dz * dz);
+        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        float pitch = (float) (-Math.toDegrees(Math.atan2(dy, flat)));
+        return new float[]{yaw, pitch};
+    }
+
+    private static float wrap(float d) {
+        d %= 360f;
+        if (d >= 180f) d -= 360f;
+        if (d < -180f) d += 360f;
+        return d;
+    }
+
     private Vec3d orbitPoint(Vec3d targetPos, double angle) {
         double rx = radius.getFloat();
-        double ry = radiusY.getFloat();
-        double x, z;
+        double orbitX = 0, orbitZ = 0;
         switch (orbitStyle.get()) {
-            case "Ellipse" -> { x = Math.cos(angle) * rx; z = Math.sin(angle) * ry; }
-            case "Figure-8" -> { x = Math.sin(angle) * rx; z = Math.sin(angle * 2) * ry * 0.5; }
+            case "Ellipse" -> { orbitX = Math.cos(angle) * rx; orbitZ = Math.sin(angle) * rx; }
+            case "Figure-8" -> { orbitX = Math.sin(angle) * rx; orbitZ = Math.sin(angle * 2) * rx * 0.5; }
             case "Square" -> {
                 double t = (angle / (Math.PI * 2)) * 4;
-                int side = (int) t; double p = t - side;
+                int side = (int) t;
+                double p = t - side;
                 switch (side) {
-                    case 0 -> { x = rx * (0.5 - p); z = ry * 0.5; }
-                    case 1 -> { x = -rx * 0.5; z = ry * (0.5 - p); }
-                    case 2 -> { x = rx * (p - 0.5); z = -ry * 0.5; }
-                    default -> { x = rx * 0.5; z = ry * (p - 0.5); }
+                    case 0 -> { orbitX = rx * (0.5 - p); orbitZ = rx * 0.5; }
+                    case 1 -> { orbitX = -rx * 0.5; orbitZ = rx * (0.5 - p); }
+                    case 2 -> { orbitX = rx * (p - 0.5); orbitZ = -rx * 0.5; }
+                    default -> { orbitX = rx * 0.5; orbitZ = rx * (p - 0.5); }
                 }
-                x *= 2; z *= 2;
             }
             case "Triangle" -> {
                 double t = (angle / (Math.PI * 2)) * 3;
-                int side = (int) t; double p = t - side;
-                double a1 = side * (Math.PI * 2 / 3);
-                double a2 = ((side + 1) % 3) * (Math.PI * 2 / 3);
-                double x1 = Math.cos(a1) * rx, z1 = Math.sin(a1) * ry;
-                double x2 = Math.cos(a2) * rx, z2 = Math.sin(a2) * ry;
-                x = x1 + (x2 - x1) * p; z = z1 + (z2 - z1) * p;
+                int side = (int) t;
+                double p = t - side;
+                double angle1 = side * (Math.PI * 2 / 3);
+                double angle2 = ((side + 1) % 3) * (Math.PI * 2 / 3);
+                double x1 = Math.cos(angle1) * rx, z1 = Math.sin(angle1) * rx;
+                double x2 = Math.cos(angle2) * rx, z2 = Math.sin(angle2) * rx;
+                orbitX = x1 + (x2 - x1) * p;
+                orbitZ = z1 + (z2 - z1) * p;
             }
-            default -> { x = Math.cos(angle) * rx; z = Math.sin(angle) * ry; }
+            default -> { orbitX = Math.cos(angle) * rx; orbitZ = Math.sin(angle) * rx; }
         }
-        return new Vec3d(targetPos.x + x, targetPos.y, targetPos.z + z);
+        return new Vec3d(targetPos.x + orbitX, targetPos.y, targetPos.z + orbitZ);
     }
 
     private Entity pickTarget(MinecraftClient client) {
@@ -279,21 +342,8 @@ public class TargetStrafeModule extends CheatModule {
                 return KillAuraModule.target;
             }
         }
-        if (withAimAssist.get()) {
-            AimAssistModule assist = ModuleManager.get(AimAssistModule.class);
-            if (assist != null && assist.isEnabled() && AimAssistModule.target != null && AimAssistModule.target.isAlive()) {
-                return AimAssistModule.target;
-            }
-        }
-        if (withTriggerBot.get()) {
-            TriggerBotModule tb = ModuleManager.get(TriggerBotModule.class);
-            if (tb != null && tb.isEnabled() && client.crosshairTarget instanceof EntityHitResult ehr
-                    && ehr.getEntity() instanceof LivingEntity le && le.isAlive()) {
-                return le;
-            }
-        }
-        if (withCrosshair.get() && client.crosshairTarget instanceof EntityHitResult ehr
-                && ehr.getEntity() instanceof LivingEntity le && le.isAlive()) {
+        if (client.crosshairTarget instanceof EntityHitResult hit
+                && hit.getEntity() instanceof LivingEntity le && le.isAlive()) {
             return le;
         }
         return null;
