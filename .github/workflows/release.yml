@@ -3,7 +3,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 jobs:
   build:
@@ -20,16 +19,31 @@ jobs:
 
       - run: chmod +x gradlew
 
+      - name: Rebuild transformer with CI JDK
+        run: |
+          cd tools
+          mkdir -p build/classes
+          javac --release 21 -cp "libs/asm-9.7.jar:libs/asm-commons-9.7.jar" -d build/classes src/main/java/com/ank/StringEncryptorMain.java
+          cd build/classes
+          jar xf ../../libs/asm-9.7.jar
+          jar xf ../../libs/asm-commons-9.7.jar
+          rm -rf META-INF
+          jar cfe ../../string-encryptor.jar com.ank.StringEncryptorMain .
+
       - run: ./gradlew clean build
 
-      - name: Find and rename jar
+      - name: Find obf jar
         id: find
         run: |
-          JAR=$(find build/libs -name "lib.jar" | head -1)
+          echo "=== build/libs contents ==="
+          ls -la build/libs/
+          JAR=$(find build/libs -name "*-obf.jar" | head -1)
           if [ -z "$JAR" ]; then
-            JAR=$(find build/libs -name "*.jar" ! -name "*sources*" | head -1)
+            echo "ERROR: no *-obf.jar found"
+            exit 1
           fi
           echo "found $JAR"
+          ls -la "$JAR"
           mkdir -p out
           cp "$JAR" out/lib.jar
           echo "jar=out/lib.jar" >> $GITHUB_OUTPUT
