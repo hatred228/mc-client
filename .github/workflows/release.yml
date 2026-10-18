@@ -1,8 +1,10 @@
-name: Release
+name: Build and Release
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,39 +19,22 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - run: chmod +x gradlew
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-      - name: Rebuild transformer with CI JDK
+      - name: Build with Gradle (no obfuscation)
+        run: ./gradlew clean build -Pank.obfuscate=false
+
+      - name: Rename jar to lib.jar
         run: |
-          cd tools
-          mkdir -p build/classes
-          javac --release 21 -cp "libs/asm-9.7.jar:libs/asm-commons-9.7.jar" -d build/classes src/main/java/com/ank/StringEncryptorMain.java
-          cd build/classes
-          jar xf ../../libs/asm-9.7.jar
-          jar xf ../../libs/asm-commons-9.7.jar
-          rm -rf META-INF
-          jar cfe ../../string-encryptor.jar com.ank.StringEncryptorMain .
-
-      - run: ./gradlew clean build
-
-      - name: Find obf jar
-        id: find
-        run: |
-          echo "=== build/libs contents ==="
-          ls -la build/libs/
-          JAR=$(find build/libs -name "*-obf.jar" | head -1)
-          if [ -z "$JAR" ]; then
-            echo "ERROR: no *-obf.jar found"
-            exit 1
-          fi
-          echo "found $JAR"
-          ls -la "$JAR"
-          mkdir -p out
-          cp "$JAR" out/lib.jar
-          echo "jar=out/lib.jar" >> $GITHUB_OUTPUT
+          mv build/libs/undetected-1.0.0.jar build/libs/lib.jar
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.find.outputs.jar }}
-          name: ${{ github.ref_name }}
+          files: build/libs/lib.jar
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
