@@ -12,7 +12,10 @@ import java.util.Random;
 
 /**
  * Обёртки над RotationManager. Публичный API сохранён для CombatUtil.
- * Больше не шлёт пакеты сам — это делает ClientPlayNetworkHandlerMixin.
+ * Больше не шлёт пакеты сам — это делает ClientCommonNetworkHandlerMixin.
+ *
+ * GCD — чистый vanilla, без jitter. Вся "человечность" — в tremor/drift
+ * модулей AimController/AimAssist, применяется ДО applyGcd.
  */
 public final class AnticheatBypass {
 
@@ -38,6 +41,23 @@ public final class AnticheatBypass {
 
     private static float curPitch(ClientPlayerEntity p) {
         return RotationManager.isActive() ? RotationManager.getPitch() : p.getPitch();
+    }
+
+    /**
+     * Intave GCD — синхронизированный yaw/pitch с чистым vanilla GCD.
+     * НЕ добавляет jitter (Intave палит jitter на rotation stream).
+     */
+    public static float[] applyIntaveGcd(float yaw, float pitch) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.options == null) {
+            return new float[]{ yaw, pitch };
+        }
+        double sens = client.options.getMouseSensitivity().getValue();
+        float f = (float) (sens * 0.6 + 0.2);
+        float gcd = Math.max(1.0e-5f, f * f * f * 1.2f);
+        float y = Math.round(yaw / gcd) * gcd;
+        float p = Math.round(pitch / gcd) * gcd;
+        return new float[]{ y, p };
     }
 
     public static void silentLook(ClientPlayerEntity player, float yaw, float pitch) {

@@ -36,7 +36,7 @@ public class MinecraftClientMixin {
     private void bfb$fastPlace(CallbackInfo ci) {
         FastPlaceModule fastPlace = FastPlaceModule.instance;
         if (fastPlace == null || !fastPlace.isEnabled()) return;
-        int min = Math.max(2, fastPlace.delay.getInt());
+        int min = fastPlace.effectiveDelay();
         if (itemUseCooldown > min) {
             itemUseCooldown = min;
         }

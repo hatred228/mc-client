@@ -4,6 +4,7 @@ public enum Category {
     COMBAT("Combat", 0xFFFF4D6D),
     MOVEMENT("Movement", 0xFF3DFFB0),
     RENDER("Render", 0xFFB14DFF),
+    VISUALS("Visuals", 0xFF4CC3FF),
     WORLD("World", 0xFFFFC14D),
     PLAYER("Player", 0xFF4DA3FF),
     MISC("Misc", 0xFF9AA0B5),
@@ -17,11 +18,6 @@ public enum Category {
         this.color = color;
     }
 
-    public String getDisplayName() {
-        return displayName;
-    }
-
-    public int getColor() {
-        return color;
-    }
+    public String getDisplayName() { return displayName; }
+    public int getColor() { return color; }
 }

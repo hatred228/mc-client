@@ -32,7 +32,12 @@ public class HitBoxesModule extends CheatModule {
         int argb = 0xFF000000 | color.getRgb();
         var area = client.player.getBoundingBox().expand(48);
         for (var entity : client.world.getOtherEntities(client.player, area)) {
-            RenderUtil.outline(matrices, consumers, entity.getBoundingBox().expand(expand.get()), camera, argb, 1.25f);
+            float tickF = client.getRenderTickCounter().getTickProgress(false);
+            Vec3d lerped = entity.getLerpedPos(tickF);
+            Vec3d offset = lerped.subtract(entity.getEntityPos());
+            RenderUtil.outline(matrices, consumers,
+                    entity.getBoundingBox().offset(offset).expand(expand.get()),
+                    camera, argb, 1.25f);
         }
     }
 }

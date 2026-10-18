@@ -71,9 +71,6 @@ public final class RenderUtil {
         return project(snapshot(), world);
     }
 
-    /**
-     * Проекция через матрицы вида и проекции — не дрожит при зуме и спринте.
-     */
     public static Vec3d toScreenFixedFov(Vec3d world) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null) return null;
@@ -162,12 +159,10 @@ public final class RenderUtil {
         line(matrices, consumers, x1, y1, z2, x1, y2, z2, color, width);
     }
 
-    /** Стандартные углы — длина фиксированная (0.28 от ребра). */
     public static void corners(MatrixStack matrices, VertexConsumerProvider consumers, Box box, Vec3d camera, int color, float width) {
         corners(matrices, consumers, box, camera, color, width, 0.28f);
     }
 
-    /** Углы с настраиваемой длиной: fraction ∈ [0.02..0.5] — доля от ребра. */
     public static void corners(MatrixStack matrices, VertexConsumerProvider consumers, Box box, Vec3d camera,
                                int color, float width, float fraction) {
         double x1 = box.minX - camera.x;
@@ -194,7 +189,6 @@ public final class RenderUtil {
         }
     }
 
-    /** Старый stub — фиксированная доля 0.28 (для обратной совместимости). */
     private static void stub(MatrixStack matrices, VertexConsumerProvider consumers, double[] from, double[] to, int color, float width) {
         stub(matrices, consumers, from, to, color, width, 0.28f);
     }
@@ -261,7 +255,6 @@ public final class RenderUtil {
         matrices.popMatrix();
     }
 
-    /** Линия с линейным градиентом цвета от start к end. */
     public static void gradientLine(DrawContext context, int x1, int y1, int x2, int y2,
                                     int colorStart, int colorEnd, int thickness) {
         float dx = x2 - x1;
@@ -340,6 +333,64 @@ public final class RenderUtil {
         vc.vertex(mat, x3, y3, z3).color(color);
     }
 
+    /** Triangle с depth test — используется для skybox (перекрывается горами). */
+    public static void triangleDepth(MatrixStack matrices, VertexConsumerProvider consumers, Vec3d camera,
+                                      Vec3d a, Vec3d b, Vec3d c, int color) {
+        Matrix4f mat = matrices.peek().getPositionMatrix();
+        VertexConsumer vc = consumers.getBuffer(BfbRenderLayers.QUAD_LAYER_DEPTH);
+        float x1 = (float) (a.x - camera.x), y1 = (float) (a.y - camera.y), z1 = (float) (a.z - camera.z);
+        float x2 = (float) (b.x - camera.x), y2 = (float) (b.y - camera.y), z2 = (float) (b.z - camera.z);
+        float x3 = (float) (c.x - camera.x), y3 = (float) (c.y - camera.y), z3 = (float) (c.z - camera.z);
+        vc.vertex(mat, x1, y1, z1).color(color);
+        vc.vertex(mat, x2, y2, z2).color(color);
+        vc.vertex(mat, x3, y3, z3).color(color);
+        vc.vertex(mat, x3, y3, z3).color(color);
+    }
+
+    // ===================== DEPTH-TESTED =====================
+
+    public static void tracerDepth(MatrixStack matrices, VertexConsumerProvider consumers,
+                                    Vec3d from, Vec3d to, Vec3d camera, int color, float width) {
+        lineDepth(matrices, consumers,
+                from.x - camera.x, from.y - camera.y, from.z - camera.z,
+                to.x - camera.x, to.y - camera.y, to.z - camera.z,
+                color, width);
+    }
+
+    public static void ringDepth(MatrixStack matrices, VertexConsumerProvider consumers,
+                                  Vec3d center, Vec3d camera, double radius, int color) {
+        int segments = 28;
+        for (int i = 0; i < segments; i++) {
+            double a1 = Math.PI * 2 * i / segments;
+            double a2 = Math.PI * 2 * (i + 1) / segments;
+            lineDepth(matrices, consumers,
+                    center.x + Math.cos(a1) * radius - camera.x,
+                    center.y - camera.y,
+                    center.z + Math.sin(a1) * radius - camera.z,
+                    center.x + Math.cos(a2) * radius - camera.x,
+                    center.y - camera.y,
+                    center.z + Math.sin(a2) * radius - camera.z,
+                    color, 2f);
+        }
+    }
+
+    private static void lineDepth(MatrixStack matrices, VertexConsumerProvider consumers,
+                                   double x1, double y1, double z1, double x2, double y2, double z2,
+                                   int color, float width) {
+        float nx = (float) (x2 - x1);
+        float ny = (float) (y2 - y1);
+        float nz = (float) (z2 - z1);
+        float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len < 1.0e-4f) return;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+        MatrixStack.Entry entry = matrices.peek();
+        VertexConsumer vc = consumers.getBuffer(BfbRenderLayers.LINE_LAYER_DEPTH);
+        vc.vertex(entry, (float) x1, (float) y1, (float) z1).color(color).normal(entry, nx, ny, nz).lineWidth(width);
+        vc.vertex(entry, (float) x2, (float) y2, (float) z2).color(color).normal(entry, nx, ny, nz).lineWidth(width);
+    }
+
     // ===================== INTERNALS =====================
 
     private static void line(MatrixStack matrices, VertexConsumerProvider consumers,
@@ -372,7 +423,6 @@ public final class RenderUtil {
 
     // ===================== COLOR UTILS =====================
 
-    /** Линейная интерполяция ARGB по компонентам (не premultiplied). */
     public static int lerpArgb(int a, int b, float t) {
         t = Math.max(0f, Math.min(1f, t));
         int aa = (a >>> 24) & 0xFF, ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
@@ -383,12 +433,10 @@ public final class RenderUtil {
                 | (int) (ab + (bb - ab) * t);
     }
 
-    /** Линейная интерполяция RGB (альфа отбрасывается). */
     public static int lerpRgb(int a, int b, float t) {
         return lerpArgb(0xFF000000 | (a & 0xFFFFFF), 0xFF000000 | (b & 0xFFFFFF), t) & 0xFFFFFF;
     }
 
-    /** HSB → RGB без аллокаций. h,s,b ∈ [0,1]. Возвращает 0xRRGGBB. */
     public static int hsbToRgb(float h, float s, float b) {
         h = h - (float) Math.floor(h);
         float c = b * s;
@@ -410,7 +458,6 @@ public final class RenderUtil {
         return (ri << 16) | (gi << 8) | bi;
     }
 
-    /** Утилита: применить альфу к rgb и получить argb. */
     public static int withAlpha(int rgb, int alpha) {
         return ((alpha & 0xFF) << 24) | (rgb & 0xFFFFFF);
     }

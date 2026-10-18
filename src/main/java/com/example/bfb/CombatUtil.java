@@ -19,7 +19,35 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
 public final class CombatUtil {
+    @Deprecated
+    private static boolean reachSpoofEnabled = false;
+
+    @Deprecated
+    private static boolean reachSpoofMovingOnly = true;
+
     private CombatUtil() {}
+
+    @Deprecated
+    public static void setReachSpoofEnabled(boolean enabled) {
+        reachSpoofEnabled = enabled;
+    }
+
+    @Deprecated
+    public static void setReachSpoofMovingOnly(boolean movingOnly) {
+        reachSpoofMovingOnly = movingOnly;
+    }
+
+    private static boolean shouldUseReachSpoof(MinecraftClient client, double distance) {
+        if (!reachSpoofEnabled) return false;
+        if (distance <= 2.95 || distance > 3.5) return false;
+        if (reachSpoofMovingOnly) {
+            var player = client.player;
+            if (player == null) return false;
+            double speed = Math.hypot(player.getVelocity().x, player.getVelocity().z);
+            return speed > 0.02;
+        }
+        return true;
+    }
 
     public static boolean accept(Entity entity, PlayerEntity self, boolean players, boolean mobs, boolean animals) {
         if (entity == self || !(entity instanceof LivingEntity living) || !living.isAlive()) return false;
@@ -30,11 +58,6 @@ public final class CombatUtil {
         return false;
     }
 
-    /**
-     * Угол между silent-yaw и целью.
-     * Если silent rotation активна — читаем её, иначе камеру.
-     * Это ключевой метод: без него KillAura/AutoClicker/AttackAura не видят silent aim.
-     */
     public static float angle(Entity player, Entity target) {
         float yaw = RotationManager.isActive()
                 ? RotationManager.getYaw()
@@ -42,7 +65,6 @@ public final class CombatUtil {
         return Math.abs(wrap(yawTo(player, target) - yaw));
     }
 
-    /** Только pitch-компонент. */
     public static float pitchAngle(Entity player, Entity target) {
         float pitch = RotationManager.isActive()
                 ? RotationManager.getPitch()
@@ -50,7 +72,6 @@ public final class CombatUtil {
         return Math.abs(pitchTo(player, target) - pitch);
     }
 
-    /** Комбинированный угол: sqrt(dYaw² + dPitch²). */
     public static float fullAngle(Entity player, Entity target) {
         float yaw = RotationManager.isActive() ? RotationManager.getYaw() : player.getYaw();
         float pitch = RotationManager.isActive() ? RotationManager.getPitch() : player.getPitch();
@@ -132,13 +153,11 @@ public final class CombatUtil {
                 player.getYaw(), player.getPitch(), player.isOnGround(), player.horizontalCollision));
     }
 
-    /** Silent rotation через AnticheatBypass (пишет в RotationManager). */
     public static void silentLookAt(ClientPlayerEntity player, Vec3d point) {
         float[] rot = AnticheatBypass.lookAt(player.getEyePos(), point);
         AnticheatBypass.snapLook(player, rot[0], rot[1]);
     }
 
-    /** Плавное silent-наведение с шагом. */
     public static void gradualLookAt(ClientPlayerEntity player, Vec3d point, float maxStep) {
         float[] rot = AnticheatBypass.lookAt(player.getEyePos(), point);
         AnticheatBypass.gradualLook(player, rot[0], rot[1], maxStep);
@@ -146,27 +165,24 @@ public final class CombatUtil {
 
     public static void syncSlot(ClientPlayerEntity player, int slot) {
         if (slot < 0 || slot > 8 || player.networkHandler == null) return;
-        if (player.getInventory().getSelectedSlot() != slot) player.getInventory().setSelectedSlot(slot);
-        player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(slot));
+        if (player.getInventory().getSelectedSlot() != slot) {
+            player.getInventory().setSelectedSlot(slot);
+            player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(slot));
+        }
     }
 
-    /** Обычная атака. Без reach spoof. */
+    public static void syncSlotDelayed(ClientPlayerEntity player, int slot, int delayTicks) {
+        if (slot < 0 || slot > 8 || player.networkHandler == null) return;
+        if (player.getInventory().getSelectedSlot() != slot) {
+            player.getInventory().setSelectedSlot(slot);
+            player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(slot));
+        }
+    }
+
     public static void attack(Entity target) {
         attack(target, false);
     }
 
-    /**
-     * Атака с опциональным reach bypass.
-     *
-     * spoof = false — обычная атака. Всегда работает.
-     * spoof = true  — position offset 0.08 к цели перед attackEntity.
-     *                 Расширяет серверный reach с 3.0 до ~3.5.
-     *                 Может палиться на Intave/Verus/Matrix при стоянии на месте.
-     *                 Не палится при движении (offset маскируется дельтой движения).
-     *
-     * Работает только если дистанция в 2.95..3.5 — иначе spoof не нужен или бесполезен.
-     * Миксин ClientPlayNetworkHandlerMixin подменяет только rotation, position уходит как есть.
-     */
     public static void attack(Entity target, boolean spoof) {
         MinecraftClient client = MinecraftClient.getInstance();
         ClientPlayerEntity player = client.player;
@@ -175,7 +191,9 @@ public final class CombatUtil {
         double dist = player.distanceTo(target);
         if (dist > 3.5) return;
 
-        if (spoof && dist > 2.95 && player.networkHandler != null) {
+        boolean useReachSpoof = spoof && shouldUseReachSpoof(client, dist);
+
+        if (useReachSpoof && player.networkHandler != null) {
             Vec3d playerPos = player.getEntityPos();
             Vec3d targetPos = target.getEntityPos();
             Vec3d dir = targetPos.subtract(playerPos);
@@ -190,6 +208,7 @@ public final class CombatUtil {
             }
         }
 
+        // Никаких silent rotation отправок — mixin подменит в position-пакете
         client.interactionManager.attackEntity(player, target);
         player.swingHand(Hand.MAIN_HAND);
     }

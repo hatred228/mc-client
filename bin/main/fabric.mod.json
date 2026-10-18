@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "undetected",
+  "version": "${version}",
+  "name": "undetected",
+  "description": "Undetected Client — Minecraft cheat client.",
+  "authors": ["hatred"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": { "client": ["com.example.bfb.BfbMod"] },
+  "mixins": ["undetected.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

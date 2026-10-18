@@ -6,6 +6,7 @@ import com.example.bfb.CheatModule;
 import com.example.bfb.CombatUtil;
 import com.example.bfb.FriendManager;
 import com.example.bfb.ScriptManager;
+import com.example.bfb.combat.CombatController;
 import com.example.bfb.setting.BooleanSetting;
 import com.example.bfb.setting.NumberSetting;
 import net.minecraft.entity.Entity;
@@ -54,15 +55,10 @@ public class TriggerBotModule extends CheatModule {
         var player = client.player;
         if (player == null || client.currentScreen != null) return;
 
-        // отслеживание смерти последней цели — для ScriptManager.kill
         if (lastHitId >= 0) {
             lastHitTicks++;
             Entity current = client.world != null ? client.world.getEntityById(lastHitId) : null;
             boolean dead = current == null || !current.isAlive();
-            if (debug.get() && lastHitTicks % 20 == 0) {
-                player.sendMessage(net.minecraft.text.Text.literal(
-                        "§7[tb] id=" + lastHitId + " ticks=" + lastHitTicks + " dead=" + dead), true);
-            }
             if (dead) {
                 String victimName = lastHit != null ? lastHit.getName().getString() : ("id#" + lastHitId);
                 ScriptManager.kill(victimName);
@@ -76,7 +72,6 @@ public class TriggerBotModule extends CheatModule {
             }
         }
 
-        // ping gate
         if (pingCheck.get() && client.getNetworkHandler() != null) {
             var entry = client.getNetworkHandler().getPlayerListEntry(player.getUuid());
             if (entry != null && entry.getLatency() > maxPing.getInt()) return;
@@ -85,27 +80,27 @@ public class TriggerBotModule extends CheatModule {
         if (wait > 0) { wait--; return; }
         if (ticksSinceLastAttack < minTicks.getInt()) return;
 
-        // цель под прицелом (расширенный hitbox учитывается автоматически)
         if (!(client.crosshairTarget instanceof EntityHitResult hit)) return;
         var target = hit.getEntity();
         if (target == null || !target.isAlive()) return;
         if (!CombatUtil.accept(target, player, players.get(), mobs.get(), animals.get())) return;
         if (FriendManager.isFriend(target)) return;
 
-        // range UI max 3.5 — совпадает с серверным hard cap CombatUtil.attack
         if (target.squaredDistanceTo(player) > range.get() * range.get()) return;
-
         if (visibleOnly.get() && !CombatUtil.canSee(player, target)) return;
         if (player.getAttackCooldownProgress(0f) < cooldownReady.getFloat()) return;
 
-        // без reach spoof — безопасно на Matrix/Vulcan
+        // === CombatController.canAttack для проверки профиля античита ===
+        if (!CombatController.canAttack(player, target)) return;
+
         CombatUtil.attack(target, false);
 
         lastHit = target;
         lastHitId = target.getId();
         lastHitTicks = 0;
         ticksSinceLastAttack = 0;
-        wait = delay.getInt() + RNG.nextInt(2);
+        // === Задержка из профиля античита ===
+        wait = CombatController.attackDelay();
 
         if (debug.get()) {
             player.sendMessage(net.minecraft.text.Text.literal(

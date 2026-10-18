@@ -4,7 +4,6 @@ import com.example.bfb.BfbConfig;
 import com.example.bfb.SalFont;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
-import com.example.bfb.HudEditor;
 import com.example.bfb.ModuleManager;
 import com.example.bfb.PanicManager;
 import com.example.bfb.ScriptManager;
@@ -14,6 +13,7 @@ import com.example.bfb.setting.ColorSetting;
 import com.example.bfb.setting.ModeSetting;
 import com.example.bfb.setting.NumberSetting;
 import com.example.bfb.setting.Setting;
+import com.example.bfb.setting.SettingGroup;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.client.gui.Click;
@@ -62,6 +62,11 @@ public class ClickGuiScreen extends Screen {
     private static final int KIND_IMPORT_CODE = 14;
     private static final int KIND_EXPORT_FILE = 15;
     private static final int KIND_IMPORT_FILE = 16;
+    private static final int KIND_PROFILE_LOAD = 20;
+    private static final int KIND_PROFILE_DELETE = 21;
+    private static final int KIND_CLOSE_CONFIGS = 22;
+    private static final int KIND_OPEN_FOLDER = 23;
+    private static final int KIND_APPLY_THEME = 24;
 
     private static final int[] PRESETS = {
             0xFF4D6D, 0xFF8A3D, 0xFFE14D, 0x3DFF8A, 0x3DE1FF, 0x7C5CFF, 0xFFFFFF
@@ -99,8 +104,13 @@ public class ClickGuiScreen extends Screen {
     private int sliderW;
     private Hit hover;
 
+    private ColorSetting pickerColor = null;
+    private float pickerHue = 0f;
+    private float pickerX, pickerY;
+    private boolean pickerDragging = false;
+
     public ClickGuiScreen() {
-        super(Text.literal("Library Utils"));
+        super(Text.literal("Undetected"));
     }
 
     public boolean blocksMovement() {
@@ -128,16 +138,24 @@ public class ClickGuiScreen extends Screen {
     }
 
     public static void applyGui(JsonObject gui) {
-        placeDefaults();
-        if (gui == null) return;
-        int[] xs = ints(gui.getAsJsonArray("x"));
-        int[] ys = ints(gui.getAsJsonArray("y"));
-        boolean[] closed = bools(gui.getAsJsonArray("collapsed"));
-        for (int i = 0; i < PANELS && i < xs.length && i < ys.length; i++) {
-            panelX[i] = xs[i];
-            panelY[i] = ys[i];
+        try {
+            placeDefaults();
+            if (gui == null) return;
+            if (!gui.has("x") || !gui.has("y")) return;
+            if (!gui.get("x").isJsonArray() || !gui.get("y").isJsonArray()) return;
+            int[] xs = ints(gui.getAsJsonArray("x"));
+            int[] ys = ints(gui.getAsJsonArray("y"));
+            boolean[] closed = gui.has("collapsed") && gui.get("collapsed").isJsonArray()
+                    ? bools(gui.getAsJsonArray("collapsed"))
+                    : new boolean[0];
+            for (int i = 0; i < PANELS && i < xs.length && i < ys.length; i++) {
+                panelX[i] = xs[i];
+                panelY[i] = ys[i];
+            }
+            for (int i = 0; i < PANELS && i < closed.length; i++) collapsed[i] = closed[i];
+        } catch (Throwable ignored) {
+            placed = false;
         }
-        for (int i = 0; i < PANELS && i < closed.length; i++) collapsed[i] = closed[i];
     }
 
     private static void refreshTheme() {
@@ -156,10 +174,7 @@ public class ClickGuiScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        if (PanicManager.isPanicked()) {
-            this.close();
-            return;
-        }
+        if (PanicManager.isPanicked()) { this.close(); return; }
         long now = System.currentTimeMillis();
         float dt = Math.min(0.05f, Math.max(0.001f, (now - lastFrameMs) / 1000f));
         lastFrameMs = now;
@@ -171,8 +186,13 @@ public class ClickGuiScreen extends Screen {
 
         int swBg = context.getScaledWindowWidth();
         int shBg = context.getScaledWindowHeight();
-        context.fillGradient(0, 0, swBg, shBg, 0xD0080A10, 0xF005060B);
 
+        ThemeModule theme = ThemeModule.get();
+        if (theme != null && theme.menuBlur.get()) {
+            try { com.example.bfb.BlurRenderer.applyBlur(); } catch (Throwable ignored) {}
+        }
+
+        context.fillGradient(0, 0, swBg, shBg, 0xD0080A10, 0xF005060B);
         GuiBackdrop.draw(context, width, height);
 
         ensurePlaced();
@@ -202,9 +222,15 @@ public class ClickGuiScreen extends Screen {
                 SalFont.draw(context, SalFont.fit(ScriptManager.error(), w), x, y + HEADER + view + 2, 0xFFFF6A7A);
             }
         }
+
         if (configOpen) drawConfigs(context);
         drawTooltip(context, mouseX, mouseY);
         ScriptEditor.render(context, width, height);
+
+        if (pickerColor != null) {
+            GuiColorPicker.render(context, pickerColor, pickerX, pickerY, pickerHue);
+        }
+
         SalFont.draw(context, SalFont.fit("LMB toggle   RMB settings   v collapse   bind right   DEL clear", width - 28),
                 18, height - SalFont.height() - 6, MUTED);
     }
@@ -249,7 +275,7 @@ public class ClickGuiScreen extends Screen {
 
         String count = ModuleManager.enabledIn(category) + "";
         int countW = SalFont.width(count);
-        SalFont.draw(context, SalFont.fit(com.example.bfb.Lang.tr(category.getDisplayName()), w - countW - 32),
+        SalFont.draw(context, SalFont.fit(category.getDisplayName(), w - countW - 32),
                 x + 16, textY, TEXT);
         SalFont.draw(context, count, x + w - 8 - countW, textY, category.getColor());
         hits.add(new Hit(x + 16, y, w - 16, HEADER, category, null, null, KIND_HEADER, null));
@@ -314,12 +340,32 @@ public class ClickGuiScreen extends Screen {
 
     private int drawSettings(DrawContext context, Category category, CheatModule module, int x, int rowY, int w, int panelY, int viewBottom) {
         for (Setting setting : module.getSettings()) {
-            int h = settingHeight(setting);
-            if (rowY + h > panelY + HEADER && rowY < viewBottom) {
-                drawSetting(context, setting, x + 4, rowY, w - 8, h);
-                hits.add(new Hit(x + 4, rowY, w - 8, h, category, module, setting, KIND_SETTING, null));
+            if (setting instanceof SettingGroup group) {
+                int headerH = 14;
+                if (rowY + headerH > panelY + HEADER && rowY < viewBottom) {
+                    context.fill(x + 4, rowY, x + w - 4, rowY + headerH - 1, 0x601A1A24);
+                    SalFont.draw(context, group.getName(), x + 8, rowY + 3, ACCENT);
+                    context.fill(x + 4, rowY + headerH - 1, x + w - 4, rowY + headerH, ACCENT);
+                }
+                rowY += headerH;
+
+                for (Setting child : group.children()) {
+                    int ch = settingHeight(child);
+                    if (rowY + ch > panelY + HEADER && rowY < viewBottom) {
+                        drawSetting(context, child, x + 8, rowY, w - 16, ch);
+                        hits.add(new Hit(x + 8, rowY, w - 16, ch, category, module, child, KIND_SETTING, null));
+                    }
+                    rowY += ch;
+                }
+                rowY += 2;
+            } else {
+                int h = settingHeight(setting);
+                if (rowY + h > panelY + HEADER && rowY < viewBottom) {
+                    drawSetting(context, setting, x + 4, rowY, w - 8, h);
+                    hits.add(new Hit(x + 4, rowY, w - 8, h, category, module, setting, KIND_SETTING, null));
+                }
+                rowY += h;
             }
-            rowY += h;
         }
         return rowY;
     }
@@ -357,7 +403,7 @@ public class ClickGuiScreen extends Screen {
         int keyX = x + w - 26 - keyW;
         int textY = rowY + Math.max(1, (ROW - SalFont.height()) / 2);
 
-        SalFont.draw(context, SalFont.fit(com.example.bfb.Lang.tr(module.getName()), keyX - x - 12),
+        SalFont.draw(context, SalFont.fit(module.getName(), keyX - x - 12),
                 x + 8, textY, enabled || hovered ? TEXT : MUTED);
 
         context.fill(keyX - 3, rowY + 3, keyX + keyW + 3, rowY + ROW - 3,
@@ -368,9 +414,7 @@ public class ClickGuiScreen extends Screen {
         int toggleH = 8;
         int toggleX = x + w - toggleW - 4;
         int toggleY = rowY + (ROW - toggleH) / 2;
-        int trackCol = enabled
-                ? GuiDraw.lerpColor(0xFF2A1F44, ACCENT, g)
-                : 0xFF2A2A38;
+        int trackCol = enabled ? GuiDraw.lerpColor(0xFF2A1F44, ACCENT, g) : 0xFF2A2A38;
         context.fill(toggleX, toggleY, toggleX + toggleW, toggleY + toggleH, trackCol);
         int knobOff = toggleX + 1;
         int knobOn = toggleX + toggleW - 7;
@@ -383,53 +427,78 @@ public class ClickGuiScreen extends Screen {
     }
 
     private void drawConfigs(DrawContext context) {
-        int x = 318;
-        int y = 32;
-        int w = 160;
         List<String> profiles = BfbConfig.profiles();
-        int h = 18 + ROW * 5 + profiles.size() * ROW + 6;
-        GuiDraw.round(context, x, y, w, h, 5, BG);
-        GuiDraw.roundBorder(context, x, y, w, h, 5, 0x2AFFFFFF);
-        GuiDraw.roundTop(context, x, y, w, 16, 5, HEADER_BG);
+        int w = 260;
+        int h = 320;
+        int x = (width - w) / 2;
+        int y = (height - h) / 2;
 
-        String shown = configName.isEmpty() && !configFocus ? "name" : configName + (configFocus ? "_" : "");
-        SalFont.draw(context, SalFont.fit(shown, w - 12), x + 6, y + 4,
+        context.fill(0, 0, width, height, 0x80000000);
+        GuiDraw.round(context, x, y, w, h, 6, 0xF00C0C14);
+        GuiDraw.roundBorder(context, x, y, w, h, 6, 0x30FFFFFF);
+        GuiDraw.roundTop(context, x, y, w, 22, 6, 0xF0141420);
+
+        SalFont.draw(context, "Configs", x + 8, y + 7, TEXT);
+        context.fill(x + 8, y + 21, x + w / 2, y + 22, ACCENT);
+        context.fill(x + w / 2, y + 21, x + w - 8, y + 22, ACCENT_2);
+        SalFont.draw(context, "x", x + w - 14, y + 7, 0xFFFF6A7A);
+        hits.add(new Hit(x + w - 18, y + 2, 16, 18, null, null, null, KIND_CLOSE_CONFIGS, null));
+
+        int rowY = y + 28;
+        context.fill(x + 8, rowY, x + w - 8, rowY + 18, 0xFF1A1A24);
+        GuiDraw.roundBorder(context, x + 8, rowY, w - 16, 18, 3, 0x2AFFFFFF);
+        String shown = configName.isEmpty() && !configFocus ? "config name..." : configName + (configFocus ? "_" : "");
+        SalFont.draw(context, SalFont.fit(shown, w - 24), x + 14, rowY + 5,
                 configName.isEmpty() && !configFocus ? MUTED : TEXT);
-        hits.add(new Hit(x, y, w, 16, null, null, null, KIND_FIELD, null));
+        hits.add(new Hit(x + 8, rowY, w - 16, 18, null, null, null, KIND_FIELD, null));
+        rowY += 24;
 
-        int rowY = y + 18;
+        int half = (w - 20) / 2;
+        drawActionBtn(context, x + 8, rowY, half, 16, "Save", 0xFF3DFFB0, KIND_SAVE);
+        drawActionBtn(context, x + 12 + half, rowY, half, 16, "Apply theme", 0xFFB14DFF, KIND_APPLY_THEME);
+        rowY += 22;
 
-        context.fill(x + 4, rowY, x + w - 4, rowY + ROW - 2, 0xFF1C1830);
-        SalFont.draw(context, "Save profile", x + 8, rowY + 2, 0xFF3DFFB0);
-        hits.add(new Hit(x, rowY, w, ROW - 1, null, null, null, KIND_SAVE, null));
-        rowY += ROW;
+        drawActionBtn(context, x + 8, rowY, half, 16, "Export code", ACCENT_2, KIND_EXPORT_CODE);
+        drawActionBtn(context, x + 12 + half, rowY, half, 16, "Import code", ACCENT_2, KIND_IMPORT_CODE);
+        rowY += 22;
 
-        context.fill(x + 4, rowY, x + w - 4, rowY + ROW - 2, 0xFF122430);
-        SalFont.draw(context, "Export code", x + 8, rowY + 2, 0xFF4CC3FF);
-        hits.add(new Hit(x, rowY, w, ROW - 1, null, null, null, KIND_EXPORT_CODE, null));
-        rowY += ROW;
+        drawActionBtn(context, x + 8, rowY, half, 16, "Export file", 0xFFB14DFF, KIND_EXPORT_FILE);
+        drawActionBtn(context, x + 12 + half, rowY, half, 16, "Open folder", 0xFFE8C890, KIND_OPEN_FOLDER);
+        rowY += 24;
 
-        context.fill(x + 4, rowY, x + w - 4, rowY + ROW - 2, 0xFF122430);
-        SalFont.draw(context, "Import code", x + 8, rowY + 2, 0xFF4CC3FF);
-        hits.add(new Hit(x, rowY, w, ROW - 1, null, null, null, KIND_IMPORT_CODE, null));
-        rowY += ROW;
+        context.fill(x + 8, rowY, x + w - 8, rowY + 1, 0x1AFFFFFF);
+        rowY += 6;
 
-        context.fill(x + 4, rowY, x + w - 4, rowY + ROW - 2, 0xFF231830);
-        SalFont.draw(context, "Export file", x + 8, rowY + 2, 0xFFB14DFF);
-        hits.add(new Hit(x, rowY, w, ROW - 1, null, null, null, KIND_EXPORT_FILE, null));
-        rowY += ROW;
+        String title = "Saved profiles (" + profiles.size() + ")";
+        SalFont.draw(context, title, x + 10, rowY, MUTED);
+        rowY += 12;
 
-        context.fill(x + 4, rowY, x + w - 4, rowY + ROW - 2, 0xFF231830);
-        SalFont.draw(context, "Import file", x + 8, rowY + 2, 0xFFB14DFF);
-        hits.add(new Hit(x, rowY, w, ROW - 1, null, null, null, KIND_IMPORT_FILE, null));
-        rowY += ROW;
+        int listH = y + h - rowY - 8;
+        int listRowH = 16;
+        int maxRows = listH / listRowH;
+        for (int i = 0; i < profiles.size() && i < maxRows; i++) {
+            String p = profiles.get(i);
+            boolean active = p.equalsIgnoreCase(BfbConfig.active());
+            int py = rowY + i * listRowH;
+            if (active) context.fill(x + 8, py, x + w - 8, py + listRowH - 1, 0x30FFFFFF);
+            SalFont.draw(context, SalFont.fit(p, w - 70), x + 12, py + 4, active ? ACCENT_2 : TEXT);
 
-        for (String profile : profiles) {
-            int color = profile.equalsIgnoreCase(BfbConfig.active()) ? ACCENT_2 : MUTED;
-            SalFont.draw(context, SalFont.fit(profile, w - 12), x + 6, rowY + 2, color);
-            hits.add(new Hit(x, rowY, w, ROW - 1, null, null, null, KIND_PROFILE, profile));
-            rowY += ROW;
+            context.fill(x + w - 60, py + 1, x + w - 36, py + listRowH - 2, 0xFF12202A);
+            SalFont.draw(context, "L", x + w - 52, py + 4, 0xFF3DFFB0);
+            hits.add(new Hit(x + w - 60, py, 24, listRowH - 1, null, null, null, KIND_PROFILE_LOAD, p));
+
+            context.fill(x + w - 34, py + 1, x + w - 10, py + listRowH - 2, 0xFF2A1220);
+            SalFont.draw(context, "x", x + w - 26, py + 4, 0xFFFF6A7A);
+            hits.add(new Hit(x + w - 34, py, 24, listRowH - 1, null, null, null, KIND_PROFILE_DELETE, p));
         }
+    }
+
+    private void drawActionBtn(DrawContext context, int x, int y, int w, int h, String label, int color, int kind) {
+        context.fill(x, y, x + w, y + h, 0xFF1A1A24);
+        GuiDraw.roundBorder(context, x, y, w, h, 3, 0x2AFFFFFF);
+        int tw = SalFont.width(label);
+        SalFont.draw(context, label, x + (w - tw) / 2, y + (h - SalFont.height()) / 2, color);
+        hits.add(new Hit(x, y, w, h, null, null, null, kind, null));
     }
 
     private void drawSetting(DrawContext context, Setting setting, int x, int y, int w, int h) {
@@ -498,6 +567,19 @@ public class ClickGuiScreen extends Screen {
         double mx = click.x();
         double my = click.y();
         int button = click.button();
+
+        if (pickerColor != null) {
+            if (GuiColorPicker.mouseClick(pickerColor, mx, my, pickerX, pickerY, pickerHue, button)) {
+                pickerDragging = true;
+                return true;
+            }
+            if (!inside(mx, my, (int) (pickerX - 8), (int) (pickerY - 8),
+                    (int) (GuiColorPicker.TOTAL_W + 16), (int) (GuiColorPicker.TOTAL_H + 16))) {
+                pickerColor = null;
+                pickerDragging = false;
+            } else return true;
+        }
+
         if (ScriptEditor.isOpen()) return ScriptEditor.mouseClicked(click, width, height);
         if (binding != null && button >= GLFW.GLFW_MOUSE_BUTTON_MIDDLE && button <= GLFW.GLFW_MOUSE_BUTTON_8) {
             binding.bind(button);
@@ -525,6 +607,68 @@ public class ClickGuiScreen extends Screen {
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit hit = hits.get(i);
             if (!inside(mx, my, hit.x, hit.y, hit.w, hit.h)) continue;
+
+            if (hit.kind == KIND_CLOSE_CONFIGS) { configOpen = false; return true; }
+            if (hit.kind == KIND_FIELD) { configFocus = true; return true; }
+            if (hit.kind == KIND_SAVE) {
+                BfbConfig.saveProfile(configName);
+                notification("Saved: " + configName, 0x55FF55);
+                return true;
+            }
+            if (hit.kind == KIND_APPLY_THEME) {
+                ThemeModule tm = ThemeModule.get();
+                if (tm != null) tm.applyPreset(tm.themePreset.get());
+                notification("Theme applied", 0x55FF55);
+                return true;
+            }
+            if (hit.kind == KIND_EXPORT_CODE) {
+                String code = BfbConfig.exportAsCode();
+                if (code != null) {
+                    net.minecraft.client.MinecraftClient.getInstance().keyboard.setClipboard(code);
+                    notification("Code copied (" + code.length() + " chars)", 0x55FF55);
+                } else notification("Export failed", 0xFF5050);
+                return true;
+            }
+            if (hit.kind == KIND_IMPORT_CODE) {
+                String code = net.minecraft.client.MinecraftClient.getInstance().keyboard.getClipboard();
+                if (code != null && !code.isEmpty() && BfbConfig.importFromCode(code)) {
+                    notification("Imported from clipboard", 0x55FF55);
+                } else notification("Invalid code", 0xFF5050);
+                return true;
+            }
+            if (hit.kind == KIND_EXPORT_FILE) {
+                try {
+                    java.nio.file.Files.createDirectories(BfbConfig.EXPORTS);
+                    String fname = (configName == null || configName.isEmpty() ? "export" : configName) + ".json";
+                    java.nio.file.Path file = BfbConfig.EXPORTS.resolve(fname);
+                    if (BfbConfig.exportToFile(file))
+                        notification("Exported: " + file.getFileName(), 0x55FF55);
+                    else notification("Export failed", 0xFF5050);
+                } catch (Exception e) {
+                    notification("Error: " + e.getMessage(), 0xFF5050);
+                }
+                return true;
+            }
+            if (hit.kind == KIND_OPEN_FOLDER) {
+                try {
+                    java.nio.file.Files.createDirectories(BfbConfig.PROFILES);
+                    java.awt.Desktop.getDesktop().open(BfbConfig.PROFILES.toFile());
+                } catch (Exception ignored) {}
+                return true;
+            }
+            if (hit.kind == KIND_PROFILE_LOAD) {
+                if (BfbConfig.loadProfile(hit.label)) {
+                    configName = hit.label;
+                    notification("Loaded: " + hit.label, 0x55FF55);
+                } else notification("Load failed", 0xFF5050);
+                return true;
+            }
+            if (hit.kind == KIND_PROFILE_DELETE) {
+                BfbConfig.deleteProfile(hit.label);
+                notification("Deleted: " + hit.label, 0xFF5050);
+                return true;
+            }
+
             if (hit.kind == KIND_COLLAPSE || (hit.kind == KIND_HEADER && button == GLFW.GLFW_MOUSE_BUTTON_RIGHT)) {
                 int index = hit.category.ordinal();
                 collapsed[index] = !collapsed[index];
@@ -538,94 +682,13 @@ public class ClickGuiScreen extends Screen {
                 moved = false;
                 return true;
             }
-            if (hit.kind == KIND_RELOAD) {
-                ScriptManager.reload();
-                return true;
-            }
-            if (hit.kind == KIND_NEW) {
-                ScriptEditor.open(ScriptManager.create());
-                return true;
-            }
-            if (hit.kind == KIND_FILE) {
-                ScriptEditor.open(hit.label);
-                return true;
-            }
-            if (hit.kind == KIND_STOP) {
-                ScriptManager.stop(hit.label);
-                return true;
-            }
-            if (hit.kind == KIND_RUN) {
-                ScriptManager.launch(hit.label);
-                return true;
-            }
-            if (hit.kind == KIND_DELETE) {
-                ScriptManager.delete(hit.label);
-                return true;
-            }
-            if (hit.kind == KIND_FIELD) {
-                configFocus = true;
-                return true;
-            }
-            if (hit.kind == KIND_SAVE) {
-                BfbConfig.saveProfile(configName);
-                notification("Profile saved: " + configName, 0x55FF55);
-                return true;
-            }
-            if (hit.kind == KIND_EXPORT_CODE) {
-                String code = BfbConfig.exportAsCode();
-                if (code != null) {
-                    net.minecraft.client.MinecraftClient.getInstance().keyboard.setClipboard(code);
-                    notification("Config code copied to clipboard (" + code.length() + " chars)", 0x55FF55);
-                } else {
-                    notification("Export failed", 0xFF5050);
-                }
-                return true;
-            }
-            if (hit.kind == KIND_IMPORT_CODE) {
-                String code = net.minecraft.client.MinecraftClient.getInstance().keyboard.getClipboard();
-                if (code != null && !code.isEmpty() && BfbConfig.importFromCode(code)) {
-                    notification("Config imported from clipboard", 0x55FF55);
-                } else {
-                    notification("Invalid config code", 0xFF5050);
-                }
-                return true;
-            }
-            if (hit.kind == KIND_EXPORT_FILE) {
-                try {
-                    java.nio.file.Files.createDirectories(BfbConfig.EXPORTS);
-                    String fname = (configName == null || configName.isEmpty() ? "export" : configName) + ".json";
-                    java.nio.file.Path file = BfbConfig.EXPORTS.resolve(fname);
-                    if (BfbConfig.exportToFile(file)) {
-                        notification("Exported to " + file.getFileName(), 0x55FF55);
-                    } else {
-                        notification("Export failed", 0xFF5050);
-                    }
-                } catch (Exception e) {
-                    notification("Export error: " + e.getMessage(), 0xFF5050);
-                }
-                return true;
-            }
-            if (hit.kind == KIND_IMPORT_FILE) {
-                String fname = (configName == null || configName.isEmpty() ? "export" : configName) + ".json";
-                java.nio.file.Path file = BfbConfig.EXPORTS.resolve(fname);
-                if (BfbConfig.importFromFile(file)) {
-                    notification("Imported from " + fname, 0x55FF55);
-                } else {
-                    notification("File not found: " + fname, 0xFF5050);
-                }
-                return true;
-            }
-            if (hit.kind == KIND_PROFILE) {
-                if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
-                    BfbConfig.deleteProfile(hit.label);
-                    notification("Deleted: " + hit.label, 0xFF5050);
-                } else {
-                    BfbConfig.loadProfile(hit.label);
-                    configName = hit.label;
-                    notification("Loaded: " + hit.label, 0x55FF55);
-                }
-                return true;
-            }
+            if (hit.kind == KIND_RELOAD) { ScriptManager.reload(); return true; }
+            if (hit.kind == KIND_NEW) { ScriptEditor.open(ScriptManager.create()); return true; }
+            if (hit.kind == KIND_FILE) { ScriptEditor.open(hit.label); return true; }
+            if (hit.kind == KIND_STOP) { ScriptManager.stop(hit.label); return true; }
+            if (hit.kind == KIND_RUN) { ScriptManager.launch(hit.label); return true; }
+            if (hit.kind == KIND_DELETE) { ScriptManager.delete(hit.label); return true; }
+
             if (hit.kind == KIND_MODULE) {
                 if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
                     int index = hit.category.ordinal();
@@ -637,31 +700,20 @@ public class ClickGuiScreen extends Screen {
                     int bindLeft = bindX(hit);
                     int bindRight = bindLeft + SalFont.width(key) + 8;
                     if (mx >= bindLeft && mx <= bindRight) {
-                        if (binding == hit.module) {
-                            hit.module.unbind();
-                            binding = null;
-                        } else {
-                            binding = hit.module;
-                        }
+                        if (binding == hit.module) { hit.module.unbind(); binding = null; }
+                        else binding = hit.module;
                         return true;
                     }
-                    if (binding != null) {
-                        binding = null;
-                        return true;
-                    }
+                    if (binding != null) { binding = null; return true; }
                     hit.module.toggle();
                     return true;
                 }
             }
             if (hit.setting instanceof BooleanSetting bool) {
-                bool.toggle();
-                BfbConfig.save();
-                return true;
+                bool.toggle(); BfbConfig.save(); return true;
             }
             if (hit.setting instanceof ModeSetting mode) {
-                mode.cycle();
-                BfbConfig.save();
-                return true;
+                mode.cycle(); BfbConfig.save(); return true;
             }
             if (hit.setting instanceof NumberSetting number && my >= hit.y + 11) {
                 dragNumber = number;
@@ -677,6 +729,16 @@ public class ClickGuiScreen extends Screen {
                         color.setRgb(PRESETS[index]);
                         BfbConfig.save();
                     }
+                    return true;
+                }
+                if (mx >= hit.x + hit.w - 18 && mx <= hit.x + hit.w - 2
+                        && my >= hit.y + 2 && my <= hit.y + 11) {
+                    pickerColor = color;
+                    pickerHue = GuiColorPicker.rgbToHsv(color.getRgb())[0];
+                    pickerX = hit.x + hit.w + 8;
+                    pickerY = Math.max(8f, hit.y);
+                    if (pickerX + GuiColorPicker.TOTAL_W > width - 8)
+                        pickerX = hit.x - GuiColorPicker.TOTAL_W - 8;
                     return true;
                 }
                 if (my >= hit.y + 23) {
@@ -702,6 +764,10 @@ public class ClickGuiScreen extends Screen {
 
     @Override
     public boolean mouseDragged(Click click, double offsetX, double offsetY) {
+        if (pickerDragging && pickerColor != null) {
+            GuiColorPicker.mouseDrag(pickerColor, click.x(), click.y(), pickerX, pickerY, pickerHue);
+            return true;
+        }
         if (dragging != null) {
             int index = dragging.ordinal();
             panelX[index] = (int) (click.x() - dragX);
@@ -717,6 +783,7 @@ public class ClickGuiScreen extends Screen {
     public boolean mouseReleased(Click click) {
         boolean wasDragging = dragging != null;
         dragging = null;
+        if (pickerDragging) { pickerDragging = false; BfbConfig.save(); }
         if (dragNumber != null || dragColor != null || (wasDragging && moved)) BfbConfig.save();
         moved = false;
         dragNumber = null;
@@ -808,14 +875,50 @@ public class ClickGuiScreen extends Screen {
 
     @Override
     public void close() {
+        // === патч: сохраняем всё, включая позиции виджетов ===
+        try {
+            com.google.gson.JsonObject root = new com.google.gson.JsonObject();
+
+            // 1. meta
+            root.addProperty("profile", BfbConfig.active());
+
+            // 2. gui layout
+            if (hasLayout()) root.add("gui", exportGui());
+
+            // 3. HUD widget positions — это то что нам нужно
+            root.add("hud_positions", com.example.bfb.HudEditor.toJson());
+
+            // 4. modules (enabled + settings)
+            com.google.gson.JsonObject modulesJson = new com.google.gson.JsonObject();
+            for (CheatModule m : ModuleManager.getModules()) {
+                com.google.gson.JsonObject data = new com.google.gson.JsonObject();
+                data.addProperty("enabled", m.isEnabled());
+                data.addProperty("key", m.getKeybind());
+                com.google.gson.JsonObject settings = new com.google.gson.JsonObject();
+                for (Setting s : m.getSettings()) {
+                    settings.addProperty(s.getName(), s.serialize());
+                }
+                data.add("settings", settings);
+                modulesJson.add(m.getName(), data);
+            }
+            root.add("modules", modulesJson);
+
+            // 5. write
+            java.nio.file.Path file = net.fabricmc.loader.api.FabricLoader.getInstance()
+                    .getConfigDir().resolve("undetected.json");
+            com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+            java.nio.file.Files.writeString(file, gson.toJson(root));
+        } catch (Throwable t) {
+            System.err.println("[BFB] close save failed: " + t.getMessage());
+        }
+
+        // старый вызов save оставляем — он же дублирует профиль
         BfbConfig.save();
         super.close();
     }
 
     @Override
-    public boolean shouldPause() {
-        return false;
-    }
+    public boolean shouldPause() { return false; }
 
     private void applyDrag(double mouseX) {
         if (sliderW <= 0) return;
@@ -832,7 +935,15 @@ public class ClickGuiScreen extends Screen {
         for (CheatModule module : modules(category)) {
             total += ROW;
             if (module == opened[category.ordinal()]) {
-                for (Setting setting : module.getSettings()) total += settingHeight(setting);
+                for (Setting setting : module.getSettings()) {
+                    if (setting instanceof SettingGroup group) {
+                        total += 14;
+                        for (Setting child : group.children()) total += settingHeight(child);
+                        total += 2;
+                    } else {
+                        total += settingHeight(setting);
+                    }
+                }
             }
         }
         total += ROW * 2;
@@ -858,15 +969,31 @@ public class ClickGuiScreen extends Screen {
         for (CheatModule module : modules) {
             total += ROW;
             if (module == opened) {
-                for (Setting setting : module.getSettings()) total += settingHeight(setting);
+                for (Setting setting : module.getSettings()) {
+                    if (setting instanceof SettingGroup group) {
+                        total += 14;
+                        for (Setting child : group.children()) total += settingHeight(child);
+                        total += 2;
+                    } else {
+                        total += settingHeight(setting);
+                    }
+                }
             }
         }
         return Math.max(total, ROW);
     }
 
     private static int settingHeight(Setting setting) {
+        if (setting instanceof SettingGroup group) {
+            int h = 14;
+            for (Setting c : group.children()) h += settingHeight(c);
+            return h + 2;
+        }
         if (setting instanceof NumberSetting) return SalFont.height() + 8;
         if (setting instanceof ColorSetting) return 40;
+        if (setting instanceof com.example.bfb.hud.HudCompactStyle.Options opts) {
+            return 16 + opts.all().size() * 12 + 4;
+        }
         return 14;
     }
 

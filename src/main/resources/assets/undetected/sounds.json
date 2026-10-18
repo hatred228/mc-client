@@ -2,14 +2,14 @@
   "fart": {
     "sounds": [
       {
-        "name": "big-fat-boy:fart"
+        "name": "undetected:fart"
       }
     ]
   },
   "moan": {
     "sounds": [
       {
-        "name": "big-fat-boy:moan"
+        "name": "undetected:moan"
       }
     ]
   }

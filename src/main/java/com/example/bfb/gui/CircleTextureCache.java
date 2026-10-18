@@ -85,7 +85,7 @@ public final class CircleTextureCache {
             }
         }
 
-        Identifier id = Identifier.of("libbase",
+        Identifier id = Identifier.of("undetected",
                 "circle/" + type + "_" + size + "_" + param);
         NativeImageBackedTexture tex = new NativeImageBackedTexture(() -> "bfb-circle", img);
         MinecraftClient.getInstance().getTextureManager().registerTexture(id, tex);

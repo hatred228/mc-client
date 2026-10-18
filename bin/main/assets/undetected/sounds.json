@@ -1,0 +1,16 @@
+{
+  "fart": {
+    "sounds": [
+      {
+        "name": "big-fat-boy:fart"
+      }
+    ]
+  },
+  "moan": {
+    "sounds": [
+      {
+        "name": "big-fat-boy:moan"
+      }
+    ]
+  }
+}

@@ -42,14 +42,12 @@ public final class AimController {
     private static float driftAmpPitch = 0f;
 
     private static long lastFrameNanos = 0L;
-    private static long nextSyncMs = 0L;
 
     private static float kp = 0.12f;
     private static float ki = 0.002f;
     private static float kd = 0.04f;
     private static float maxVel = 12f;
     private static float baseTremor = 0.10f;
-    private static float gcdJitter = 1.0f;
     private static int syncJitter = 0;
 
     private AimController() {}
@@ -61,11 +59,15 @@ public final class AimController {
         return d;
     }
 
+    /**
+     * Точный vanilla GCD. БЕЗ jitter — Intave палит несовпадение с vanilla.
+     * Человечность — в tremor + drift, применяется ДО snap.
+     */
     private static float gcd() {
         MinecraftClient client = MinecraftClient.getInstance();
         double sens = client.options.getMouseSensitivity().getValue();
         float f = (float) (sens * 0.6 + 0.2);
-        return Math.max(1.0e-5f, f * f * f * 1.2f) * (0.96f + RNG.nextFloat() * 0.08f) * gcdJitter;
+        return Math.max(1.0e-5f, f * f * f * 1.2f);
     }
 
     private static float snap(float value, float gcd) {
@@ -140,18 +142,19 @@ public final class AimController {
         driftSpeedPitch = 0.3f + RNG.nextFloat() * 0.5f;
         driftAmpYaw = 0.15f + RNG.nextFloat() * 0.35f;
         driftAmpPitch = 0.08f + RNG.nextFloat() * 0.18f;
-        gcdJitter = 0.98f + RNG.nextFloat() * 0.04f;
     }
 
+    /**
+     * Отпустить цель. ВАЖНО: сбрасываем aimYaw/aimPitch в NaN —
+     * так при следующей цели bezier стартует с текущей позиции игрока,
+     * а не продолжает старый.
+     */
     public static void clearTarget() {
         hasTarget = false;
         bezierActive = false;
+        aimYaw = Float.NaN;
+        aimPitch = Float.NaN;
         RotationManager.release();
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player != null) {
-            aimYaw = client.player.getYaw();
-            aimPitch = client.player.getPitch();
-        }
     }
 
     public static void rageTo(ClientPlayerEntity player, float yaw, float pitch) {
@@ -159,6 +162,7 @@ public final class AimController {
         RotationManager.set(yaw, pitch);
         aimYaw = yaw;
         aimPitch = pitch;
+        hasTarget = true;
     }
 
     public static void updateFrame() {
@@ -215,6 +219,7 @@ public final class AimController {
             aimPitch += outputPitch * dt * 60f;
         }
 
+        // tremor + drift добавляются ДО snap — поток остаётся кратным GCD
         float playerSpeed = (float) Math.hypot(player.getVelocity().x, player.getVelocity().z);
         float speedFactor = MathHelper.clamp(playerSpeed / 0.15f, 0.1f, 1f);
         refreshTremor(baseTremor * speedFactor);
@@ -234,12 +239,11 @@ public final class AimController {
         fy = snap(fy, g);
         fp = snap(fp, g);
 
-        // silent — пишем в менеджер, не в камеру
         RotationManager.set(fy, fp);
     }
 
     public static void syncServer(ClientPlayerEntity player) {
-        // no-op: rotation уходит через ClientPlayNetworkHandlerMixin
+        // no-op: rotation уходит через ClientCommonNetworkHandlerMixin
     }
 
     public static float aimYaw() { return Float.isNaN(aimYaw) ? 0f : aimYaw; }
@@ -255,7 +259,7 @@ public final class AimController {
         tremorYaw = 0f; tremorPitch = 0f;
         tremorTargetYaw = 0f; tremorTargetPitch = 0f;
         tremorRefresh = 0; driftPhase = 0f;
-        lastFrameNanos = 0L; nextSyncMs = 0L;
+        lastFrameNanos = 0L;
         hasTarget = false;
     }
 }

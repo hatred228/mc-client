@@ -21,7 +21,7 @@ import java.util.Map;
 public final class SalFont {
     private static final int ATLAS = 1024;
     private static final int SIZE = 8;
-    private static final Identifier ID = Identifier.of("libbase", "font/sal");
+    private static final Identifier ID = Identifier.of("undetected", "font/sal");
     private static final Map<Character, Glyph> GLYPHS = new HashMap<>();
     private static NativeImage image;
     private static NativeImageBackedTexture texture;
@@ -101,7 +101,7 @@ public final class SalFont {
 
     private static Font loadFont(int pixels) {
         try {
-            InputStream is = SalFont.class.getResourceAsStream("/assets/undetected/fonts/Rubik-Regular.ttf");
+            InputStream is = SalFont.class.getResourceAsStream("/assets/undetected/font/rubik-regular.ttf");
             if (is != null) {
                 Font base = Font.createFont(Font.TRUETYPE_FONT, is);
                 is.close();

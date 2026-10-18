@@ -2,6 +2,7 @@ package com.example.bfb.mixin;
 
 import com.example.bfb.ModuleManager;
 import com.example.bfb.modules.CameraModule;
+import com.example.bfb.modules.HitImpactModule;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.util.math.MatrixStack;
@@ -18,6 +19,14 @@ public class GameRendererMixin {
     private void bfb$hurt(MatrixStack matrices, float tickDelta, CallbackInfo ci) {
         CameraModule camera = ModuleManager.get(CameraModule.class);
         if (camera != null && camera.isEnabled() && camera.hurt.get()) ci.cancel();
+
+        HitImpactModule impact = ModuleManager.get(HitImpactModule.class);
+        if (impact != null && impact.isEnabled() && impact.shake.get()) {
+            float[] off = HitImpactModule.shakeOffset();
+            if (off[0] != 0f || off[1] != 0f) {
+                matrices.translate(off[0] * 0.01f, off[1] * 0.01f, 0f);
+            }
+        }
     }
 
     @Inject(method = "bobView", at = @At("HEAD"), cancellable = true)

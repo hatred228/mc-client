@@ -41,7 +41,7 @@ import java.util.Map;
 public class ChamsModule extends CheatModule {
     public final ModeSetting style = add(new ModeSetting("Style", "Gradient",
             "Model", "Flat", "Shell", "Glow", "Pulse", "Glass", "Rainbow", "Wireframe",
-            "Gradient", "Aurora", "Wave", "Scanline", "Fire", "Hologram", "Neon"));
+            "Gradient", "Aurora", "Wave", "Scanline", "Fire", "Hologram", "Neon", "Outline", "Inverted", "Wireframe 3D"));
 
     public final ColorSetting color = add(new ColorSetting("Color", 0x7C5CFF));
 
@@ -281,6 +281,52 @@ public class ChamsModule extends CheatModule {
                     RenderUtil.outline(matrices, consumers, b.expand(0.03 * i),
                             camera, (gAlpha << 24) | (rgbE & 0xFFFFFF), 1.5f);
                 }
+                continue;
+            }
+
+            if (style.is("Outline")) {
+                int outlineColor = (Math.min(230, amount) << 24) | (rgbE & 0xFFFFFF);
+                drawColored(matrices, consumers, camera, living, state, livingRenderer, tick, outlineColor, 1.0f);
+                Box b = living.getBoundingBox();
+                int thickness = Math.max(1, (int) glowThickness.getFloat());
+                int layers = thickness + 1;
+                for (int i = 1; i <= layers; i++) {
+                    int oAlpha = Math.max(10, amount / (i + 1) / 4);
+                    RenderUtil.outline(matrices, consumers, b.expand(0.02 * i),
+                            camera, (oAlpha << 24) | (rgbE & 0xFFFFFF), 2.0f);
+                }
+                continue;
+            }
+
+            if (style.is("Inverted")) {
+                int invColor = (amount << 24) | (0xFFFFFF ^ (rgbE & 0xFFFFFF));
+                drawColored(matrices, consumers, camera, living, state, livingRenderer, tick, invColor, 1.0f);
+                Box b = living.getBoundingBox();
+                int gAlpha = Math.max(20, amount / 2);
+                RenderUtil.outline(matrices, consumers, b.expand(0.05), camera, (gAlpha << 24) | 0xFFFFFF, 3.0f);
+                continue;
+            }
+
+            if (style.is("Wireframe 3D")) {
+                int wfColor = (amount << 24) | (rgbE & 0xFFFFFF);
+                Box b = living.getBoundingBox();
+                Vec3d center = b.getCenter();
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.minY, b.minZ), new Vec3d(b.maxX, b.minY, b.minZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.minY, b.minZ), new Vec3d(b.maxX, b.minY, b.maxZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.minY, b.maxZ), new Vec3d(b.minX, b.minY, b.maxZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.minY, b.maxZ), new Vec3d(b.minX, b.minY, b.minZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.minY, b.minZ), new Vec3d(b.minX, b.maxY, b.minZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.minY, b.minZ), new Vec3d(b.maxX, b.maxY, b.minZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.minY, b.maxZ), new Vec3d(b.maxX, b.maxY, b.maxZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.minY, b.maxZ), new Vec3d(b.minX, b.maxY, b.maxZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.maxY, b.minZ), new Vec3d(b.maxX, b.maxY, b.minZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.maxY, b.minZ), new Vec3d(b.maxX, b.maxY, b.maxZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.maxY, b.maxZ), new Vec3d(b.minX, b.maxY, b.maxZ), camera, wfColor, 1.0f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.maxY, b.maxZ), new Vec3d(b.minX, b.maxY, b.minZ), camera, wfColor, 1.0f);
+                float pulse = 0.5f + 0.5f * (float) Math.sin(time / 300.0 + living.getId() * 0.1);
+                int dColor = ((int)(amount * pulse) << 24) | (rgbE & 0xFFFFFF);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.minX, b.minY, b.minZ), new Vec3d(b.maxX, b.maxY, b.maxZ), camera, dColor, 0.8f);
+                RenderUtil.tracer(matrices, consumers, new Vec3d(b.maxX, b.minY, b.minZ), new Vec3d(b.minX, b.maxY, b.maxZ), camera, dColor, 0.8f);
                 continue;
             }
 

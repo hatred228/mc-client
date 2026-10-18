@@ -1,6 +1,5 @@
 package com.example.bfb.modules;
 
-import com.example.bfb.AimController;
 import com.example.bfb.BfbMod;
 import com.example.bfb.Category;
 import com.example.bfb.CheatModule;
@@ -9,6 +8,7 @@ import com.example.bfb.FriendManager;
 import com.example.bfb.HudStyle;
 import com.example.bfb.RenderUtil;
 import com.example.bfb.RotationManager;
+import com.example.bfb.combat.CombatController;
 import com.example.bfb.setting.BooleanSetting;
 import com.example.bfb.setting.ColorSetting;
 import com.example.bfb.setting.ModeSetting;
@@ -17,7 +17,6 @@ import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 
@@ -36,10 +35,15 @@ public class KillAuraModule extends CheatModule {
     public final NumberSetting maxTargets = add(new NumberSetting("Max targets", 1, 1, 5, 1));
     public final NumberSetting attackAngle = add(new NumberSetting("Attack angle", 60.0, 10.0, 180.0, 5.0));
     public final BooleanSetting silentAim = add(new BooleanSetting("Silent aim", true));
+    public final BooleanSetting aimHeadOnly = add(new BooleanSetting("Aim head only", false));
     public final BooleanSetting players = add(new BooleanSetting("Players", true));
     public final BooleanSetting mobs = add(new BooleanSetting("Mobs", true));
     public final BooleanSetting animals = add(new BooleanSetting("Animals", false));
     public final BooleanSetting throughWalls = add(new BooleanSetting("Through walls", false));
+
+    // === camera return при потере цели ===
+    public final BooleanSetting cameraReturn = add(new BooleanSetting("Camera return", true));
+    public final NumberSetting cameraReturnSpeed = add(new NumberSetting("Return speed", 1.0, 0.2, 4.0, 0.1));
 
     // === visuals ===
     public final BooleanSetting ring = add(new BooleanSetting("Target ring", true));
@@ -63,7 +67,6 @@ public class KillAuraModule extends CheatModule {
         target = null;
         attackCooldown = 0;
         HITS.clear();
-        AimController.reset();
         RotationManager.release();
     }
 
@@ -79,15 +82,13 @@ public class KillAuraModule extends CheatModule {
         var world = client.world;
         target = null;
         if (player == null || world == null || client.currentScreen != null) {
-            AimController.clearTarget();
-            RotationManager.release();
+            if (cameraReturn.get()) RotationManager.release();
             return;
         }
 
         boolean rage = mode.is("Rage");
         double reach = range.get();
 
-        // сбор кандидатов — FOV считается от silent yaw если он активен
         List<Entity> candidates = new ArrayList<>();
         for (Entity e : com.example.bfb.EntityCache.living()) {
             if (!CombatUtil.accept(e, player, players.get(), mobs.get(), animals.get())) continue;
@@ -97,8 +98,7 @@ public class KillAuraModule extends CheatModule {
             candidates.add(e);
         }
         if (candidates.isEmpty()) {
-            AimController.clearTarget();
-            RotationManager.release();
+            if (cameraReturn.get()) RotationManager.release();
             return;
         }
 
@@ -114,17 +114,15 @@ public class KillAuraModule extends CheatModule {
         Entity primary = candidates.get(0);
         target = primary;
 
-        // === наводка ===
-        if (silentAim.get() && !rage && primary instanceof LivingEntity living) {
+        // === ROTATION — через CombatController ===
+        if (primary instanceof LivingEntity living) {
             Vec3d aimPoint = getAimPoint(living);
-            float[] ideal = calculateRotations(player.getEyePos(), aimPoint);
-            // цель — silent, камера не двигается
-            float speed01 = mode.is("Smooth") ? 0.55f : 0.75f;
-            AimController.setTarget(ideal[0], ideal[1], speed01, 0.05f, 0);
-        } else if (rage && primary != null) {
-            Vec3d aimPoint = getAimPoint(primary);
-            float[] ideal = calculateRotations(player.getEyePos(), aimPoint);
-            RotationManager.set(ideal[0], ideal[1]);
+            if (rage) {
+                float[] ideal = calculateRotations(player.getEyePos(), aimPoint);
+                RotationManager.set(ideal[0], ideal[1]);
+            } else if (silentAim.get()) {
+                CombatController.rotateTo(player, aimPoint, 1f / 20f);
+            }
         }
 
         for (Entity best : candidates) {
@@ -135,13 +133,13 @@ public class KillAuraModule extends CheatModule {
 
             if (attackCooldown == 0
                     && player.getAttackCooldownProgress(0f) >= 0.92f
-                    && player.distanceTo(best) <= reach + 0.4
-                    && inAngle) {
+                    && inAngle
+                    && CombatController.canAttack(player, best)) {
                 CombatUtil.attack(best);
                 if (hitFlash.get() && best instanceof LivingEntity living) {
                     HITS.add(new HitMarker(living, now));
                 }
-                attackCooldown = 1 + RNG.nextInt(2);
+                attackCooldown = CombatController.attackDelay();
                 hit++;
             }
         }

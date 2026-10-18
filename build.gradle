@@ -6,16 +6,17 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
-// === Генерация рандомного id при каждой сборке ===
-def buildId = "lib" + Long.toHexString(System.currentTimeMillis() & 0xFFFFFF)
-ext.buildId = buildId
-
 base {
-    archivesName = "lib-${buildId}"
+    archivesName = project.archives_base_name
 }
 
 repositories {
     mavenCentral()
+}
+
+// === ГЛАВНЫЙ ФИКС: configurations ДО dependencies ===
+configurations {
+    proguardTool
 }
 
 dependencies {
@@ -23,40 +24,18 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
     include(implementation("org.luaj:luaj-jse:3.0.1"))
+    include(implementation("org.lwjgl:lwjgl-nanovg:3.3.3"))
+    include(runtimeOnly("org.lwjgl:lwjgl-nanovg:3.3.3:natives-windows"))
+
+    proguardTool 'com.guardsquare:proguard-base:7.6.1'
 }
 
-// ============================================================
-// Замена mod_id, name, авторов и переименование mixins.json
-// ============================================================
 processResources {
     inputs.property "version", project.version
-    inputs.property "id", buildId
-    inputs.property "name", "Library Utils"
-
     filesMatching("fabric.mod.json") {
-        expand(
-            "version": project.version,
-            "id": buildId,
-            "name": "Library Utils",
-            "description": "Utility library",
-            "authors": "anon"
-        )
-    }
-
-    // переименовываем undetected.mixins.json → <buildId>.mixins.json
-    rename 'undetected\\.mixins\\.json', "${buildId}.mixins.json"
-}
-
-// после processResources — обновляем ссылку на mixins файл в fabric.mod.json
-tasks.named('processResources') {
-    doLast {
-        def f = file("$buildDir/resources/main/fabric.mod.json")
-        if (f.exists()) {
-            def text = f.text
-            text = text.replace('${id}.mixins.json', "${buildId}.mixins.json")
-            f.text = text
-        }
+        expand "version": project.version
     }
 }
 
@@ -70,6 +49,133 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
-remapJar {
-    archiveFileName = "lib.jar"
+// ============================================================
+//  OBFUSCATION PIPELINE
+// ============================================================
+
+def ankBaseName = project.archives_base_name
+def ankVersion  = project.version
+
+def jarOf = { String suffix ->
+    return new File(project.buildDir, "libs/${ankBaseName}-${ankVersion}${suffix}")
+}
+
+def obfuscatedJarFile = jarOf("-obf.jar")
+def mappingFile       = new File(project.buildDir, "mappings/mapping.txt")
+
+def obfuscateEnabled = { ->
+    def v = project.hasProperty('ank.obfuscate') ? project.property('ank.obfuscate') : 'true'
+    return v.toString().toBoolean()
+}
+
+def quoteWindows = { String s ->
+    if (s == null) return '""'
+    if (!s.contains(' ') && !s.contains('"')) return s
+    return '"' + s.replace('"', '\\"') + '"'
+}
+
+def runJava = { List<String> cmd, File workingDir ->
+    def sb = new StringBuilder()
+    cmd.eachWithIndex { String s, int i ->
+        if (i > 0) sb.append(' ')
+        sb.append(quoteWindows(s))
+    }
+    def process = Runtime.getRuntime().exec(sb.toString(), null, workingDir ?: project.projectDir)
+
+    def outThread = new Thread({ process.inputStream.eachLine { println it } })
+    def errThread = new Thread({ process.errorStream.eachLine { System.err.println it } })
+    outThread.daemon = true
+    errThread.daemon = true
+    outThread.start()
+    errThread.start()
+
+    def exit = process.waitFor()
+    outThread.join(2000)
+    errThread.join(2000)
+
+    if (exit != 0) throw new GradleException("Process exited with code ${exit}: ${cmd.join(' ')}")
+}
+
+tasks.register('proguardJar') {
+    group = 'obfuscation'
+    dependsOn tasks.named('remapJar')
+
+    def remapTask = tasks.named('remapJar')
+    def remappedJarFile = remapTask.get().archiveFile.get().asFile
+
+    inputs.file(remappedJarFile).optional(true)
+    inputs.file(file("$rootDir/proguard-rules.pro"))
+    outputs.file(obfuscatedJarFile).optional(true)
+
+    doLast {
+        if (!remappedJarFile.exists()) {
+            throw new GradleException("Remapped jar not found: ${remappedJarFile}")
+        }
+        obfuscatedJarFile.parentFile.mkdirs()
+        mappingFile.parentFile.mkdirs()
+
+        if (!obfuscateEnabled()) {
+            logger.lifecycle("[ank] ank.obfuscate=false - skipping proguard")
+            java.nio.file.Files.copy(remappedJarFile.toPath(), obfuscatedJarFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            return
+        }
+
+        def jmodsDir = new File(System.getProperty('java.home'), 'jmods')
+        def uniqueLibraries = new LinkedHashSet<String>()
+
+        if (jmodsDir.exists()) {
+            ['java.base','java.desktop','java.logging','java.management','java.naming',
+             'java.net.http','java.scripting','java.sql','jdk.unsupported'].each { name ->
+                def f = new File(jmodsDir, "${name}.jmod")
+                if (f.exists()) uniqueLibraries << f.absolutePath + "(!**.jar;!module-info.class)"
+            }
+        }
+
+        int mcJarCount = 0
+        try {
+            configurations.minecraftNamedCompile.each { f ->
+                if (f.name.endsWith('.jar')) {
+                    if (uniqueLibraries.add(f.absolutePath)) mcJarCount++
+                }
+            }
+        } catch (Throwable ignored) {}
+        logger.lifecycle("[ank] MC jars in libraryjars: ${mcJarCount}")
+
+        int libCount = 0
+        try {
+            configurations.minecraftLibraries.each { f ->
+                if (f.name.endsWith('.jar')) {
+                    if (uniqueLibraries.add(f.absolutePath)) libCount++
+                }
+            }
+        } catch (Throwable ignored) {}
+        logger.lifecycle("[ank] extra library jars: ${libCount}")
+
+        def argsList = []
+        argsList << "@${rootDir}/proguard-rules.pro".toString()
+        argsList << '-injars'  << remappedJarFile.absolutePath
+        argsList << '-outjars' << obfuscatedJarFile.absolutePath
+        uniqueLibraries.each { lib -> argsList << '-libraryjars' << lib }
+        argsList << '-printmapping' << mappingFile.absolutePath
+
+        def pgCp = configurations.proguardTool.files.collect { it.absolutePath }.join(File.pathSeparator)
+        def cmd = [ new File(System.getProperty('java.home'), 'bin/java').absolutePath, '-cp', pgCp, 'proguard.ProGuard' ] + argsList
+
+        logger.lifecycle("[ank] running proguard...")
+        runJava(cmd, project.projectDir)
+        logger.lifecycle("[ank] proguard -> ${obfuscatedJarFile.name}")
+    }
+}
+
+tasks.register('obfuscatedJar', Copy) {
+    group = 'obfuscation'
+    dependsOn tasks.named('proguardJar')
+    from obfuscatedJarFile
+    into layout.buildDirectory.dir("obf")
+    rename { "${ankBaseName}-${ankVersion}.jar" }
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('remapJar')
+    finalizedBy tasks.named('obfuscatedJar')
 }
