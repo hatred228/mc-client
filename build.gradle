@@ -14,7 +14,6 @@ repositories {
     mavenCentral()
 }
 
-// === ГЛАВНЫЙ ФИКС: configurations ДО dependencies ===
 configurations {
     proguardTool
 }
@@ -48,10 +47,6 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
-
-// ============================================================
-//  OBFUSCATION PIPELINE
-// ============================================================
 
 def ankBaseName = project.archives_base_name
 def ankVersion  = project.version

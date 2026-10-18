@@ -2,11 +2,12 @@
 #  Ank / undetected — ProGuard rules
 # ============================================================
 
-# Отключаем сжатие и оптимизацию, чтобы не ломать байткод
 -dontshrink
 -dontoptimize
 
-# Обязательные атрибуты для Fabric и Java 21
+# Запрещаем ProGuard трогать фреймы (это главная причина VerifyError)
+# НЕ добавляй сюда -dontpreverify!
+
 -keepattributes *Annotation*
 -keepattributes RuntimeVisibleAnnotations
 -keepattributes RuntimeInvisibleAnnotations
@@ -18,26 +19,33 @@
 -keepattributes Exceptions
 -keepattributes StackMapTable
 
-# Защита entrypoint (мод должен найти свой главный класс)
+# Защита главного класса (entrypoint)
 -keep class com.example.bfb.BfbMod { *; }
--keep interface com.example.bfb.BfbMod { *; }
+-keep class com.example.bfb.AnkStrings { *; }
+-keep class com.example.bfb.PanicManager { *; }
+
+# Защита миксинов (если их переименовать, игра падает с MixinApplyError)
 -keep class com.example.bfb.mixin.** { *; }
+-keep interface com.example.bfb.mixin.** { *; }
 -keep class * implements com.example.bfb.mixin.** { *; }
 
-# Fabric и библиотеки (не трогаем, чтобы не сломать загрузчик)
+# Защита остальных твоих классов (чтобы не ломались касты и рефлексия)
+-keep class com.example.bfb.** { *; }
+
+# Fabric / Mixin / библиотеки
 -keep class net.fabricmc.** { *; }
 -keep class org.spongepowered.asm.** { *; }
 -keep class org.luaj.** { *; }
 -keep class org.lwjgl.** { *; }
 
-# Обновляем ресурсы (fabric.mod.json)
+# Обновляем ссылки внутри ресурсов
 -adaptresourcefilecontents **.properties,**.json,META-INF/MANIFEST.MF
 -adaptresourcefilenames **.properties,**.txt,**.xml,**.json
 
 -dontwarn **
 -ignorewarnings
 
-# Настройки обфускации
+# Перепаковка
 -repackageclasses 'ank'
 -allowaccessmodification
 -overloadaggressively
