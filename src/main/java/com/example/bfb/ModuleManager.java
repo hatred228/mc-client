@@ -33,7 +33,7 @@ public final class ModuleManager {
         modules.add(new FastArbaletModule());
         modules.add(new TargetStrafeModule());
         modules.add(new CrystalPvpModule());
-        modules.add(new MacePvPModule());
+        modules.add(new MacePvpModule());
         modules.add(new TriggerBotModule());
         modules.add(new VelocityModule());
         modules.add(new CriticalsModule());

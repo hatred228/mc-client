@@ -69,11 +69,11 @@ public final class HudRenderer {
 
     private static void drawTracers(DrawContext context, MinecraftClient client) {
         EspModule esp = ModuleManager.get(EspModule.class);
-        if (esp == null || !esp.isEnabled() || !esp.tracers.get() || client.world == null) return;
+        if (esp == null || !esp.isEnabled() || !false || client.world == null) return;
         int screenW = context.getScaledWindowWidth();
         int screenH = context.getScaledWindowHeight();
         int startX = screenW / 2;
-        int startY = switch (esp.origin.get()) {
+        int startY = switch ("Bottom") {
             case "Bottom" -> screenH - 1;
             case "Top" -> 0;
             default -> screenH / 2;
@@ -82,7 +82,7 @@ public final class HudRenderer {
         double reach = esp.range.get();
         double reachSq = reach * reach;
         int thickness = Math.max(1, Math.min(3, Math.round(esp.width.getFloat())));
-        boolean grad = esp.tracerGradient.get();
+        boolean grad = false;
         for (LivingEntity entity : EntityCache.living()) {
             if (entity == client.player) continue;
             if (!CombatUtil.accept(entity, client.player, esp.players.get(), esp.mobs.get(), esp.animals.get())) continue;
@@ -299,15 +299,15 @@ public final class HudRenderer {
 
     private static void drawItemTags(DrawContext context, MinecraftClient client) {
         EspModule esp = ModuleManager.get(EspModule.class);
-        if (esp == null || !esp.isEnabled() || !esp.itemTags.get() || client.world == null) return;
+        if (esp == null || !esp.isEnabled() || !false || client.world == null) return;
         float tick = client.getRenderTickCounter().getTickProgress(true);
         double reach = Math.min(24, esp.range.get());
         Box area = client.player.getBoundingBox().expand(reach);
         int shown = 0;
-        float tagScale = esp.itemTagSize.getFloat();
+        float tagScale = 1.0f;
         for (ItemEntity item : client.world.getEntitiesByClass(ItemEntity.class, area, candidate ->
                 candidate.squaredDistanceTo(client.player) <= reach * reach
-                        && (!esp.gear.get() || GearItems.lyingGear(candidate.getStack())))) {
+                        && (!false || GearItems.lyingGear(candidate.getStack())))) {
             if (shown++ >= 20) break;
             Vec3d screen = RenderUtil.toScreenFixedFov(item.getLerpedPos(tick).add(0, 0.4, 0));
             if (screen == null) continue;
@@ -340,7 +340,7 @@ public final class HudRenderer {
         int sh = context.getScaledWindowHeight();
         boolean is2D = esp.style.is("2D");
         boolean doGlow = esp.glow.get();
-        float glowT = esp.glowThickness.getFloat();
+        float glowT = 1.0f;
 
         for (LivingEntity entity : EntityCache.living()) {
             if (entity == client.player) continue;
@@ -359,7 +359,7 @@ public final class HudRenderer {
 
             float ratio = entity.getMaxHealth() > 0
                     ? Math.max(0f, Math.min(1f, entity.getHealth() / entity.getMaxHealth())) : 1f;
-            boolean flash = esp.damageFlash.get() && entity.hurtTime > 0;
+            boolean flash = false && entity.hurtTime > 0;
             int rgb = flash ? 0xFF3B30 : (esp.health.get() ? healthColor(ratio) : 0xFF000000 | esp.color.getRgb());
             int alpha = esp.fade.get()
                     ? Math.max(80, (int) (255 * (1 - 0.5 * Math.sqrt(distSq) / reach))) << 24

@@ -12,7 +12,7 @@ import net.minecraft.item.Items;
 import net.minecraft.item.MaceItem;
 import org.lwjgl.glfw.GLFW;
 
-public class MacePvPModule extends CheatModule {
+public class MacePvpModule extends CheatModule {
     public final NumberSetting range = add(new NumberSetting("Range", 4, 2.5, 6, 0.1));
     public final NumberSetting minFall = add(new NumberSetting("Min fall", 1.5, 1, 10, 0.5));
     public final BooleanSetting switchBack = add(new BooleanSetting("Switch back", true));
@@ -25,7 +25,7 @@ public class MacePvPModule extends CheatModule {
     private LivingEntity pendingTarget = null;
     private int pendingTtl = 0;
 
-    public MacePvPModule() {
+    public MacePvpModule() {
         super("MacePvP", "Mace hits while falling", Category.COMBAT, GLFW.GLFW_KEY_UNKNOWN);
     }
 

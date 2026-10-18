@@ -35,8 +35,8 @@ public class ClientCommonNetworkHandlerMixin {
         );
 
         float dYaw = Math.abs(MathHelper.wrapDegrees(
-                fixed[0] - RotationManager.getLastSentYaw()));
-        float dPitch = Math.abs(fixed[1] - RotationManager.getLastSentPitch());
+                fixed[0] - RotationManager.getYaw()));
+        float dPitch = Math.abs(fixed[1] - RotationManager.getPitch());
         if (dYaw < 1.0e-4f && dPitch < 1.0e-4f) {
             return packet;
         }
